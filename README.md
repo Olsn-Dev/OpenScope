@@ -24,7 +24,7 @@ Uses a **CDM324 24 GHz K-band Doppler radar** with an LM358 op-amp preamplifier 
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Hardware & wiring | 🔲 Not started |
-| 2 | Software & calibration | 🔲 Not started |
+| 2 | Software & calibration | 🟡 In progress (v0.2) |
 | 3 | Housing & battery optimization | 🔲 Not started |
 | 4 | Testing & validation | 🔲 Not started |
 
