@@ -1,3 +1,5 @@
+<img width="1418" height="672" alt="5980D860-2881-47B6-B055-FEBFA808417B_1_201_a" src="https://github.com/user-attachments/assets/8935de40-4522-4e0e-a2bf-af1001c883e9" />
+
 # DIY Golf Launch Monitor
 
 A radar-based golf launch monitor inspired by the Shot Scope LM1. Measures ball speed, club speed, smash factor, carry distance, and total distance using a 24 GHz Doppler radar module and an ESP32 microcontroller. Battery-powered for use on the course.
