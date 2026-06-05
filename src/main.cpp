@@ -1,28 +1,32 @@
-// OpenScope — DIY Golf Launch Monitor  v0.4
+// OpenScope — DIY Golf Launch Monitor  v0.5
 // ESP32 + CDM324 24 GHz Doppler Radar + ST7796 3.5" TFT
 //
 // Signal path:
 //   CDM324 IF → LM358 preamp (×100, 300 Hz–18 kHz bandpass) → GPIO34 (ADC)
 //
-// Controls (GPIO0 / boot button):
-//   Short  (<1 s)  → next club
-//   Medium (1–3 s) → settings menu
-//   Long   (>3 s)  → calibration mode
+// Buttons:
+//   GPIO25  SCROLL  — cycle clubs / navigate menus / threshold +10 in cal
+//   GPIO26  SELECT  — confirm / open settings / threshold -10 in cal
+//   GPIO27  POWER   — hold 2 s → deep sleep; press to wake (RTC GPIO)
 //
-// Settings menu:
-//   Short  → next item
-//   Medium → activate / toggle
-//   Long   → save + exit
+// Screen flow:
+//   Splash  → Scroll: next club | Select: settings | Power(2s): sleep
+//   Result  → Scroll: next club | Select: back to splash | Power(2s): sleep
+//   Settings→ Scroll: next item | Select: activate     | Power(2s): exit+save
+//   Cal     → Scroll: +10       | Select: -10          | Power(2s): save+exit
 
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 #include <arduinoFFT.h>
 #include <Preferences.h>
+#include "esp_sleep.h"
 
 // ─── Pins ─────────────────────────────────────────────────────────────────────
 
 #define RADAR_ADC_PIN  34
-#define BTN_PIN         0
+#define BTN_SCROLL     25   // Navigate / increase
+#define BTN_SELECT     26   // Confirm / decrease
+#define BTN_POWER      27   // Power (RTC GPIO17 — supports ext0 wake)
 
 // ─── Sampling & FFT ───────────────────────────────────────────────────────────
 
@@ -47,14 +51,14 @@
 #define TFT_ROTATION  1
 #define SCR_W  480
 #define SCR_H  320
-#define COL_W  (SCR_W / 3)   // 160 px per column
-#define ROW_H  (SCR_H / 2)   // 160 px per row
+#define COL_W  (SCR_W / 3)
+#define ROW_H  (SCR_H / 2)
 
-// Custom RGB565 colors
-#define COL_DIV      0x2945   // dark grey divider  ~(40, 40, 45)
-#define COL_UNIT     0x7BCF   // medium grey units  ~(120, 120, 128)
-#define COL_DIM      0x2965   // very dark for empty tiles
-#define COL_CAL_HDR  0x5920   // dark burnt orange  ~(90, 36, 0)
+#define COL_DIV      0x2945
+#define COL_UNIT     0x7BCF
+#define COL_DIM      0x2104
+#define COL_CAL_HDR  0x5920
+#define COL_SEL_BG   0x1082
 
 // ─── Clubs ────────────────────────────────────────────────────────────────────
 
@@ -99,10 +103,10 @@ static Preferences        prefs;
 
 // ─── Unit helpers ─────────────────────────────────────────────────────────────
 
-static inline float       disp_speed(float kmh)    { return g_use_mph ? kmh * 0.621371f   : kmh; }
-static inline float       disp_dist(float meters)  { return g_use_mph ? meters * 1.09361f : meters; }
-static inline const char* speed_unit()              { return g_use_mph ? "mph" : "km/h"; }
-static inline const char* dist_unit()               { return g_use_mph ? "yds" : "m"; }
+static inline float       disp_speed(float kmh)   { return g_use_mph ? kmh * 0.621371f   : kmh; }
+static inline float       disp_dist(float m)       { return g_use_mph ? m   * 1.09361f    : m; }
+static inline const char* speed_unit()             { return g_use_mph ? "mph" : "km/h"; }
+static inline const char* dist_unit()              { return g_use_mph ? "yds" : "m"; }
 
 // ─── NVS ──────────────────────────────────────────────────────────────────────
 
@@ -111,12 +115,14 @@ static void nvs_load()
     prefs.begin("openscope", false);
     g_threshold = prefs.getFloat("thresh", PEAK_THRESHOLD_DEFAULT);
     g_use_mph   = prefs.getBool("mph", false);
+    g_club      = (int)prefs.getUInt("club", 0);
+    if (g_club < 0 || g_club >= NUM_CLUBS) g_club = 0;
     for (int i = 0; i < NUM_CLUBS; i++) {
         char k[10];
-        snprintf(k, sizeof(k), "c%d_n",  i); g_stats[i].count = prefs.getUInt(k,   0);
-        snprintf(k, sizeof(k), "c%d_s",  i); g_stats[i].sum   = prefs.getFloat(k,  0.0f);
-        snprintf(k, sizeof(k), "c%d_mx", i); g_stats[i].max_c = prefs.getFloat(k,  0.0f);
-        snprintf(k, sizeof(k), "c%d_mn", i); g_stats[i].min_c = prefs.getFloat(k,  9999.0f);
+        snprintf(k, sizeof(k), "c%d_n",  i); g_stats[i].count = prefs.getUInt(k, 0);
+        snprintf(k, sizeof(k), "c%d_s",  i); g_stats[i].sum   = prefs.getFloat(k, 0.0f);
+        snprintf(k, sizeof(k), "c%d_mx", i); g_stats[i].max_c = prefs.getFloat(k, 0.0f);
+        snprintf(k, sizeof(k), "c%d_mn", i); g_stats[i].min_c = prefs.getFloat(k, 9999.0f);
     }
     prefs.end();
 }
@@ -137,6 +143,7 @@ static void nvs_save_settings()
     prefs.begin("openscope", false);
     prefs.putFloat("thresh", g_threshold);
     prefs.putBool("mph",     g_use_mph);
+    prefs.putUInt("club",    (uint32_t)g_club);
     prefs.end();
 }
 
@@ -157,7 +164,72 @@ static void reset_stats(int idx)
     Serial.printf("[NVS] Stats reset: %s\n", CLUBS[idx].name);
 }
 
-// ─── UI — Tile grid helpers ────────────────────────────────────────────────────
+// ─── Buttons ──────────────────────────────────────────────────────────────────
+
+static bool s_prev_scroll = false;
+static bool s_prev_select = false;
+
+// Returns true on a clean falling-edge press (debounced).
+static bool scroll_pressed()
+{
+    bool cur = (digitalRead(BTN_SCROLL) == LOW);
+    if (cur && !s_prev_scroll) {
+        delay(25);
+        cur = (digitalRead(BTN_SCROLL) == LOW);
+    }
+    bool edge = cur && !s_prev_scroll;
+    s_prev_scroll = cur;
+    return edge;
+}
+
+static bool select_pressed()
+{
+    bool cur = (digitalRead(BTN_SELECT) == LOW);
+    if (cur && !s_prev_select) {
+        delay(25);
+        cur = (digitalRead(BTN_SELECT) == LOW);
+    }
+    bool edge = cur && !s_prev_select;
+    s_prev_select = cur;
+    return edge;
+}
+
+// Returns true if the power button is held for hold_ms.
+// Blocks until released or timeout. Does NOT trigger on short taps.
+static bool power_held(uint32_t hold_ms = 2000)
+{
+    if (digitalRead(BTN_POWER) != LOW) return false;
+    uint32_t t = millis();
+    while (digitalRead(BTN_POWER) == LOW) {
+        if (millis() - t >= hold_ms) {
+            while (digitalRead(BTN_POWER) == LOW) delay(10);
+            return true;
+        }
+        delay(10);
+    }
+    return false;   // released before threshold — ignore
+}
+
+// ─── Power management ─────────────────────────────────────────────────────────
+
+static void go_to_sleep()
+{
+    nvs_save_settings();
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(4);
+    tft.setTextColor(COL_DIM, TFT_BLACK);
+    tft.drawString("Goodbye", SCR_W / 2, SCR_H / 2);
+    delay(700);
+    tft.fillScreen(TFT_BLACK);
+
+    // Wake when BTN_POWER (GPIO27) goes LOW
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, 0);
+    Serial.println("[PWR] Entering deep sleep");
+    esp_deep_sleep_start();
+}
+
+// ─── UI — Tile grid ───────────────────────────────────────────────────────────
 
 static void draw_grid_lines()
 {
@@ -166,78 +238,62 @@ static void draw_grid_lines()
     tft.drawFastHLine(0, ROW_H,  SCR_W,    COL_DIV);
 }
 
-// Draws a data tile. number must be a pre-formatted string (digits only for font 7).
-// Pass dimmed=true for empty/inactive tiles.
 static void draw_tile(int col, int row,
                       const char* label, const char* number, const char* unit,
                       uint16_t num_col, bool dimmed = false)
 {
     int cx = col * COL_W + COL_W / 2;
     int y0 = row * ROW_H;
-
-    uint16_t lc = dimmed ? COL_DIM  : TFT_CYAN;
-    uint16_t nc = dimmed ? COL_DIM  : num_col;
-    uint16_t uc = dimmed ? COL_DIM  : COL_UNIT;
+    uint16_t lc = dimmed ? COL_DIM : TFT_CYAN;
+    uint16_t nc = dimmed ? COL_DIM : num_col;
+    uint16_t uc = dimmed ? COL_DIM : COL_UNIT;
 
     tft.setTextDatum(TC_DATUM);
-
-    // Label (font 4 = 26 px)
     tft.setTextFont(4); tft.setTextColor(lc, TFT_BLACK);
     tft.drawString(label, cx, y0 + 28);
-
-    // Number (font 7 = 48 px 7-segment)
     tft.setTextFont(7); tft.setTextColor(nc, TFT_BLACK);
     tft.drawString(number, cx, y0 + 62);
-
-    // Unit (font 2 = 16 px)
     tft.setTextFont(2); tft.setTextColor(uc, TFT_BLACK);
     tft.drawString(unit, cx, y0 + 118);
 }
 
-// Draws the club-selector tile: circle + abbreviation
 static void draw_club_tile(int col, int row)
 {
     int cx = col * COL_W + COL_W / 2;
     int cy = row * ROW_H + ROW_H / 2;
-
     tft.drawCircle(cx, cy, 42, TFT_CYAN);
-    tft.drawCircle(cx, cy, 43, TFT_CYAN);   // thicker outline
-
+    tft.drawCircle(cx, cy, 43, TFT_CYAN);
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(4); tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.drawString(CLUBS[g_club].abbr, cx, cy);
 }
 
-// ─── UI — Main screens ────────────────────────────────────────────────────────
+// ─── UI — Normal screens ──────────────────────────────────────────────────────
 
 static void ui_splash()
 {
     tft.fillScreen(TFT_BLACK);
     draw_grid_lines();
 
-    // Top row — dimmed (no reading yet)
     draw_tile(0, 0, "Club",  "--", speed_unit(), TFT_WHITE, true);
     draw_tile(1, 0, "Ball",  "--", speed_unit(), TFT_WHITE, true);
     draw_tile(2, 0, "Smash", "--", "Factor",     TFT_WHITE, true);
 
-    // Bottom row — per-club carry stats + club circle
     const ClubStats& s = g_stats[g_club];
-    char buf_avg[8], buf_best[8];
+    char avg[8], best[8];
     if (s.count > 0) {
-        snprintf(buf_avg,  sizeof(buf_avg),  "%.0f", disp_dist(s.sum / s.count));
-        snprintf(buf_best, sizeof(buf_best), "%.0f", disp_dist(s.max_c));
+        snprintf(avg,  sizeof(avg),  "%.0f", disp_dist(s.sum / s.count));
+        snprintf(best, sizeof(best), "%.0f", disp_dist(s.max_c));
     } else {
-        snprintf(buf_avg,  sizeof(buf_avg),  "--");
-        snprintf(buf_best, sizeof(buf_best), "--");
+        snprintf(avg,  sizeof(avg),  "--");
+        snprintf(best, sizeof(best), "--");
     }
-    draw_tile(0, 1, "Avg",  buf_avg,  dist_unit(), TFT_WHITE);
-    draw_tile(1, 1, "Best", buf_best, dist_unit(), TFT_GREEN);
+    draw_tile(0, 1, "Avg",  avg,  dist_unit(), TFT_WHITE);
+    draw_tile(1, 1, "Best", best, dist_unit(), TFT_GREEN);
     draw_club_tile(2, 1);
 
-    // Subtle "swing when ready" at the divider line
     tft.setTextDatum(TC_DATUM);
-    tft.setTextFont(2);
-    tft.setTextColor(COL_DIM, TFT_BLACK);
+    tft.setTextFont(2); tft.setTextColor(COL_DIM, TFT_BLACK);
     tft.drawString("SWING WHEN READY", SCR_W / 2, ROW_H + 4);
 }
 
@@ -249,7 +305,6 @@ static void ui_result(float ball_kmh, float club_kmh, float smash,
 
     char buf[12];
 
-    // Top row
     if (club_kmh > 0.0f) {
         snprintf(buf, sizeof(buf), "%.0f", disp_speed(club_kmh));
         draw_tile(0, 0, "Club", buf, speed_unit(), TFT_WHITE);
@@ -267,72 +322,61 @@ static void ui_result(float ball_kmh, float club_kmh, float smash,
         draw_tile(2, 0, "Smash", "--", "Factor", TFT_WHITE, true);
     }
 
-    // Bottom row
     snprintf(buf, sizeof(buf), "%.0f", disp_dist(carry_m));
     draw_tile(0, 1, "Carry", buf, dist_unit(), TFT_WHITE);
-
     snprintf(buf, sizeof(buf), "%.0f", disp_dist(total_m));
     draw_tile(1, 1, "Total", buf, dist_unit(), TFT_WHITE);
-
     draw_club_tile(2, 1);
 }
 
 // ─── UI — Settings ────────────────────────────────────────────────────────────
 
-static void ui_settings_draw(int selected, bool reset_confirmed = false)
+static void ui_settings_draw(int sel, bool reset_done = false)
 {
     tft.fillScreen(TFT_BLACK);
 
-    // Header
     tft.fillRect(0, 0, SCR_W, 48, TFT_NAVY);
     tft.setTextDatum(ML_DATUM);
     tft.setTextFont(4); tft.setTextColor(TFT_CYAN, TFT_NAVY);
     tft.drawString("Settings", 16, 24);
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_NAVY);
     tft.setTextDatum(MR_DATUM);
-    tft.drawString("short=next  medium=select  long=exit", SCR_W - 12, 24);
+    tft.drawString("scroll=next  select=choose  power=exit", SCR_W - 12, 24);
 
-    // Menu items
-    struct MenuItem { const char* label; const char* value; };
-    char unit_val[8], reset_val[20];
+    char unit_val[8];
+    char reset_val[12];
     snprintf(unit_val,  sizeof(unit_val),  "%s", g_use_mph ? "mph" : "km/h");
-    snprintf(reset_val, sizeof(reset_val), "%s", reset_confirmed ? "Done!" : CLUBS[g_club].name);
+    snprintf(reset_val, sizeof(reset_val), "%s", reset_done ? "Done!" : CLUBS[g_club].name);
 
-    const MenuItem items[] = {
-        { "Units",       unit_val   },
-        { "Reset Stats", reset_val  },
-        { "Calibration", "\x10"     },  // → arrow (char 0x10 in font 2)
-    };
-    const int N = 3;
+    const char* labels[] = { "Units",       "Reset Stats",  "Calibration" };
+    const char* values[] = { unit_val,       reset_val,      "\x10"        };
 
-    for (int i = 0; i < N; i++) {
-        int y = 72 + i * 72;
-        bool sel = (i == selected);
-        uint16_t row_col = sel ? TFT_WHITE : COL_UNIT;
+    for (int i = 0; i < 3; i++) {
+        int y = 68 + i * 74;
+        bool active = (i == sel);
 
-        // Selection indicator
-        if (sel) {
-            tft.fillRect(0, y - 4, SCR_W, 52, 0x1082);  // subtle dark highlight
-            tft.fillRect(0, y - 4, 4, 52, TFT_CYAN);    // left accent bar
+        if (active) {
+            tft.fillRect(0, y - 2, SCR_W, 54, COL_SEL_BG);
+            tft.fillRect(0, y - 2, 4,     54, TFT_CYAN);
         }
 
+        uint16_t bg = active ? COL_SEL_BG : TFT_BLACK;
         tft.setTextDatum(ML_DATUM);
-        tft.setTextFont(4); tft.setTextColor(row_col, sel ? 0x1082 : TFT_BLACK);
-        tft.drawString(items[i].label, 20, y + 20);
-
         tft.setTextFont(4);
+        tft.setTextColor(active ? TFT_WHITE : COL_UNIT, bg);
+        tft.drawString(labels[i], 20, y + 22);
+
+        uint16_t vc = active ? TFT_CYAN : COL_DIM;
+        if (i == 1 && reset_done) vc = TFT_GREEN;
+        tft.setTextColor(vc, bg);
         tft.setTextDatum(MR_DATUM);
-        uint16_t val_col = sel ? TFT_CYAN : COL_DIM;
-        if (i == 1 && reset_confirmed) val_col = TFT_GREEN;
-        tft.setTextColor(val_col, sel ? 0x1082 : TFT_BLACK);
-        tft.drawString(items[i].value, SCR_W - 20, y + 20);
+        tft.drawString(values[i], SCR_W - 20, y + 22);
     }
 
-    // Footer
     tft.drawFastHLine(0, SCR_H - 22, SCR_W, COL_DIV);
     tft.setTextDatum(BC_DATUM);
     tft.setTextFont(2); tft.setTextColor(COL_DIM, TFT_BLACK);
-    tft.drawString("OpenScope v0.4", SCR_W / 2, SCR_H - 4);
+    tft.drawString("OpenScope v0.5", SCR_W / 2, SCR_H - 4);
 }
 
 // ─── UI — Calibration ─────────────────────────────────────────────────────────
@@ -351,17 +395,15 @@ static void ui_cal_header()
     tft.drawString("CALIBRATION MODE", 10, 15);
     tft.setTextDatum(MR_DATUM);
     tft.setTextColor(TFT_WHITE, COL_CAL_HDR);
-    tft.drawString("+short  -long  save=3s", SCR_W - 8, 15);
+    tft.drawString("scroll=+10  select=-10  power=save+exit", SCR_W - 8, 15);
 
-    // X-axis labels
+    tft.setTextFont(1); tft.setTextColor(COL_DIM, TFT_BLACK);
     const struct { const char* l; int hz; } ticks[] =
         { {"2k",2000},{"5k",5000},{"8k",8000},{"12k",12000} };
     tft.setTextDatum(TC_DATUM);
-    tft.setTextFont(1);
     for (auto& t : ticks) {
         int xp = CAL_SPEC_X + (int)((float)(t.hz - MIN_DETECT_HZ) /
                                (MAX_DETECT_HZ - MIN_DETECT_HZ) * CAL_SPEC_W);
-        tft.setTextColor(COL_DIM, TFT_BLACK);
         tft.drawString(t.l, xp, CAL_SPEC_Y + CAL_SPEC_H + 4);
     }
 }
@@ -369,12 +411,11 @@ static void ui_cal_header()
 static void ui_cal_update(double peak_hz, double peak_mag,
                           float noise_ema, float max_seen)
 {
-    // Spectrum area
     tft.fillRect(CAL_SPEC_X, CAL_SPEC_Y, CAL_SPEC_W, CAL_SPEC_H, TFT_BLACK);
 
     int bin_lo = (int)((double)MIN_DETECT_HZ / SAMPLE_RATE * FFT_SIZE);
     int bin_hi = min((int)((double)MAX_DETECT_HZ / SAMPLE_RATE * FFT_SIZE), FFT_SIZE/2-1);
-    float scale = (max_seen > 1.0f) ? ((CAL_SPEC_H - 4) / max_seen) : 1.0f;
+    float scale  = (max_seen > 1.0f) ? ((CAL_SPEC_H - 4) / max_seen) : 1.0f;
     float y_base = (float)(CAL_SPEC_Y + CAL_SPEC_H - 1);
 
     for (int x = 0; x < CAL_SPEC_W; x++) {
@@ -383,16 +424,14 @@ static void ui_cal_update(double peak_hz, double peak_mag,
         float mag = (float)vReal[bin];
         int   h   = min((int)(mag * scale), CAL_SPEC_H - 1);
         if (h <= 0) continue;
-        uint16_t col = (mag >= g_threshold) ? TFT_RED : 0x0460;  // dark green
-        tft.drawFastVLine(CAL_SPEC_X + x, (int)y_base - h, h, col);
+        tft.drawFastVLine(CAL_SPEC_X + x, (int)y_base - h, h,
+                          (mag >= g_threshold) ? TFT_RED : (uint16_t)0x0460);
     }
 
-    // Threshold line
     int ty = CAL_SPEC_Y + CAL_SPEC_H - 1 - (int)(g_threshold * scale);
     if (ty >= CAL_SPEC_Y)
         tft.drawFastHLine(CAL_SPEC_X, ty, CAL_SPEC_W, TFT_YELLOW);
 
-    // Peak marker
     if (peak_hz > 0.0) {
         int px = CAL_SPEC_X + (int)(((float)peak_hz - MIN_DETECT_HZ) /
                               (MAX_DETECT_HZ - MIN_DETECT_HZ) * CAL_SPEC_W);
@@ -400,13 +439,11 @@ static void ui_cal_update(double peak_hz, double peak_mag,
             tft.drawFastVLine(px, CAL_SPEC_Y, 6, TFT_WHITE);
     }
 
-    // Metrics
-    char buf[32];
+    char buf[40];
     int MY = CAL_SPEC_Y + CAL_SPEC_H + 16;
     tft.fillRect(0, MY - 2, SCR_W, SCR_H - MY + 2, TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
 
-    // Row 1
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
     tft.drawString("NOISE FLOOR", 8, MY);
     snprintf(buf, sizeof(buf), "%.1f", noise_ema);
@@ -426,7 +463,6 @@ static void ui_cal_update(double peak_hz, double peak_mag,
     tft.setTextFont(4); tft.setTextColor(TFT_YELLOW, TFT_BLACK);
     tft.drawString(buf, 332, MY + 14);
 
-    // Row 2
     int R2Y = MY + 44;
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
     tft.drawString("PEAK FREQ", 8, R2Y);
@@ -438,7 +474,6 @@ static void ui_cal_update(double peak_hz, double peak_mag,
     tft.setTextFont(2); tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.drawString(buf, 8, R2Y + 12);
 
-    // Row 3: threshold + suggested
     int R3Y = R2Y + 34;
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
     tft.drawString("THRESHOLD", 8, R3Y);
@@ -448,13 +483,12 @@ static void ui_cal_update(double peak_hz, double peak_mag,
 
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
     tft.drawString("SUGGESTED", 200, R3Y);
-    float sug = max(noise_ema * 4.0f, noise_ema + 20.0f);
-    snprintf(buf, sizeof(buf), "%.0f  (noise x4)", sug);
+    snprintf(buf, sizeof(buf), "%.0f  (noise x4)", max(noise_ema * 4.0f, noise_ema + 20.0f));
     tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_BLACK);
     tft.drawString(buf, 200, R3Y + 12);
 }
 
-// ─── Radar sampling ───────────────────────────────────────────────────────────
+// ─── Radar ────────────────────────────────────────────────────────────────────
 
 static void sample_radar()
 {
@@ -474,8 +508,6 @@ static void run_fft()
     FFT_obj.complexToMagnitude();
 }
 
-// ─── Peak detection ───────────────────────────────────────────────────────────
-
 struct Peak { int bin; double mag; double hz; };
 
 static Peak find_best_peak(int bin_lo, int bin_hi, int excl_bin, int excl_r)
@@ -486,9 +518,9 @@ static Peak find_best_peak(int bin_lo, int bin_hi, int excl_bin, int excl_r)
         if (vReal[i] > p.mag) { p.mag = vReal[i]; p.bin = i; }
     }
     if (p.bin < 0 || p.mag < (double)g_threshold) return { -1, 0.0, 0.0 };
-    double a = (p.bin > 0)            ? vReal[p.bin-1] : 0.0;
+    double a = (p.bin > 0)          ? vReal[p.bin-1] : 0.0;
     double b = vReal[p.bin];
-    double c = (p.bin < FFT_SIZE/2)   ? vReal[p.bin+1] : 0.0;
+    double c = (p.bin < FFT_SIZE/2) ? vReal[p.bin+1] : 0.0;
     double d = a - 2.0*b + c;
     p.hz = ((double)p.bin + (d != 0.0 ? 0.5*(a-c)/d : 0.0)) * SAMPLE_RATE / FFT_SIZE;
     return p;
@@ -503,7 +535,6 @@ static bool detect_speeds(double& ball_hz, double& club_hz)
 
     Peak p1 = find_best_peak(bin_lo, bin_hi, -1, 0);
     if (p1.bin < 0) return false;
-
     Peak p2 = find_best_peak(bin_lo, bin_hi, p1.bin, sep);
 
     Serial.printf("[FFT] p1 bin=%d mag=%.1f hz=%.0f", p1.bin, p1.mag, p1.hz);
@@ -521,94 +552,32 @@ static bool detect_speeds(double& ball_hz, double& club_hz)
     return true;
 }
 
-// ─── Button ───────────────────────────────────────────────────────────────────
-
-// 0=nothing  1=short(<1s)  2=medium(1–3s)  3=long(>3s)
-static int read_button()
-{
-    if (digitalRead(BTN_PIN) != LOW) return 0;
-    uint32_t t = millis();
-    while (digitalRead(BTN_PIN) == LOW) {
-        if (millis() - t > 3000) { while (digitalRead(BTN_PIN) == LOW) delay(10); return 3; }
-        delay(10);
-    }
-    uint32_t held = millis() - t;
-    if (held < 50)   return 0;
-    if (held < 1000) return 1;
-    return 2;
-}
-
-// ─── Settings loop ────────────────────────────────────────────────────────────
-
-static void calibration_loop();   // forward declaration
-
-static void settings_loop()
-{
-    int  item = 0;
-    bool reset_confirmed = false;
-    ui_settings_draw(item);
-
-    while (true) {
-        int btn = read_button();
-
-        if (btn == 1) {
-            item = (item + 1) % 3;
-            reset_confirmed = false;
-            ui_settings_draw(item);
-
-        } else if (btn == 2) {
-            if (item == 0) {
-                g_use_mph = !g_use_mph;
-                nvs_save_settings();
-                Serial.printf("[SET] Units → %s\n", speed_unit());
-                ui_settings_draw(item);
-
-            } else if (item == 1) {
-                reset_stats(g_club);
-                reset_confirmed = true;
-                ui_settings_draw(item, true);
-                delay(800);
-                reset_confirmed = false;
-                ui_settings_draw(item);
-
-            } else if (item == 2) {
-                calibration_loop();
-                ui_settings_draw(item);
-            }
-
-        } else if (btn == 3) {
-            nvs_save_settings();
-            Serial.println("[SET] Exiting settings");
-            return;
-        }
-    }
-}
-
 // ─── Calibration loop ─────────────────────────────────────────────────────────
 
 static void calibration_loop()
 {
-    Serial.println("[CAL] Entering calibration mode");
+    Serial.println("[CAL] Enter");
     ui_cal_header();
 
-    float noise_ema = 0.0f;
-    float max_seen  = 0.0f;
-    bool  first     = true;
-
+    float noise_ema = 0.0f, max_seen = 0.0f;
+    bool  first = true;
     int bin_lo = (int)((double)MIN_DETECT_HZ / SAMPLE_RATE * FFT_SIZE);
     int bin_hi = min((int)((double)MAX_DETECT_HZ / SAMPLE_RATE * FFT_SIZE), FFT_SIZE/2-1);
 
     while (true) {
-        int btn = read_button();
-        if (btn == 1) {
+        if (scroll_pressed()) {
             g_threshold = min(g_threshold + 10.0f, 2000.0f);
             Serial.printf("[CAL] Threshold → %.0f\n", g_threshold);
-        } else if (btn == 2) {
+        }
+        if (select_pressed()) {
             g_threshold = max(g_threshold - 10.0f, 5.0f);
             Serial.printf("[CAL] Threshold → %.0f\n", g_threshold);
-        } else if (btn == 3) {
-            nvs_save_settings();
-            Serial.println("[CAL] Exiting, threshold saved");
+        }
+        if (power_held(2000)) {
+            prefs.begin("openscope", false);
+            prefs.putFloat("thresh", g_threshold);
+            prefs.end();
+            Serial.println("[CAL] Threshold saved, exit");
             return;
         }
 
@@ -626,11 +595,42 @@ static void calibration_loop()
             noise_ema = 0.92f * noise_ema + 0.08f * (float)peak_mag;
 
         if ((float)peak_mag > max_seen) max_seen = (float)peak_mag;
-
         ui_cal_update(peak_hz, peak_mag, noise_ema, max_seen);
+    }
+}
 
-        Serial.printf("[CAL] mag=%.1f noise=%.1f max=%.1f thresh=%.0f\n",
-                      peak_mag, noise_ema, max_seen, g_threshold);
+// ─── Settings loop ────────────────────────────────────────────────────────────
+
+static void settings_loop()
+{
+    int item = 0;
+    ui_settings_draw(item);
+
+    while (true) {
+        if (scroll_pressed()) {
+            item = (item + 1) % 3;
+            ui_settings_draw(item);
+        }
+        if (select_pressed()) {
+            if (item == 0) {
+                g_use_mph = !g_use_mph;
+                Serial.printf("[SET] Units → %s\n", speed_unit());
+                ui_settings_draw(item);
+            } else if (item == 1) {
+                reset_stats(g_club);
+                ui_settings_draw(item, true);
+                delay(800);
+                ui_settings_draw(item, false);
+            } else {
+                calibration_loop();
+                ui_settings_draw(item);
+            }
+        }
+        if (power_held(2000)) {
+            nvs_save_settings();
+            Serial.println("[SET] Exit");
+            return;
+        }
     }
 }
 
@@ -639,9 +639,11 @@ static void calibration_loop()
 void setup()
 {
     Serial.begin(115200);
-    Serial.println("\n[OpenScope] v0.4 booting");
+    Serial.println("\n[OpenScope] v0.5 booting");
 
-    pinMode(BTN_PIN, INPUT_PULLUP);
+    pinMode(BTN_SCROLL, INPUT_PULLUP);
+    pinMode(BTN_SELECT, INPUT_PULLUP);
+    pinMode(BTN_POWER,  INPUT_PULLUP);
 
     // ADC: 12-bit, 11 dB attenuation → ~0–3.1 V
     // On newer ESP-IDF: replace ADC_11db with ADC_ATTEN_DB_12 if it fails.
@@ -656,33 +658,32 @@ void setup()
 
     ui_splash();
 
-    Serial.printf("[OpenScope] Units: %s  |  Threshold: %.1f\n", speed_unit(), g_threshold);
-    Serial.printf("[OpenScope] Gate: %.0f–%.0f %s\n",
-                  MIN_DETECT_HZ * HZ_TO_KMH, MAX_DETECT_HZ * HZ_TO_KMH, "km/h");
+    Serial.printf("[OpenScope] Club: %s  Units: %s  Threshold: %.1f\n",
+                  CLUBS[g_club].name, speed_unit(), g_threshold);
     Serial.println("[OpenScope] Ready.");
 }
 
 void loop()
 {
-    int btn = read_button();
-
-    if (btn == 1) {
+    // ── Button handling ──────────────────────────────────────────────────────
+    if (scroll_pressed()) {
         g_club = (g_club + 1) % NUM_CLUBS;
+        nvs_save_settings();
         Serial.printf("[BTN] Club → %s\n", CLUBS[g_club].name);
         ui_splash();
         return;
     }
-    if (btn == 2) {
+    if (select_pressed()) {
         settings_loop();
         ui_splash();
         return;
     }
-    if (btn == 3) {
-        calibration_loop();
-        ui_splash();
-        return;
+    if (power_held(2000)) {
+        go_to_sleep();
+        return;   // never reached (deep sleep restarts from setup)
     }
 
+    // ── Radar detection ──────────────────────────────────────────────────────
     sample_radar();
     double ball_hz = 0.0, club_hz = 0.0;
     if (!detect_speeds(ball_hz, club_hz)) return;
@@ -699,13 +700,16 @@ void loop()
     record_carry(g_club, carry_m);
     ui_result(ball_kmh, club_kmh, smash, carry_m, total_m);
 
-    // Hold result; remain responsive to button
+    // ── Hold result, remain responsive ───────────────────────────────────────
     uint32_t t0 = millis();
     while (millis() - t0 < 6000) {
-        int b = read_button();
-        if (b == 1) { g_club = (g_club + 1) % NUM_CLUBS; break; }
-        if (b == 2) { settings_loop(); break; }
-        if (b == 3) { calibration_loop(); break; }
+        if (scroll_pressed()) {
+            g_club = (g_club + 1) % NUM_CLUBS;
+            nvs_save_settings();
+            break;
+        }
+        if (select_pressed()) break;   // dismiss result early
+        if (power_held(2000)) go_to_sleep();
         delay(20);
     }
 

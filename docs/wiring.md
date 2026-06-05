@@ -78,26 +78,28 @@ MISO is not used — leave unconnected.
 
 ---
 
-## Control Button
+## Control Buttons (v0.5 — three buttons)
 
-| Button leg | Connect to |
-|------------|------------|
-| Leg 1 | GPIO0 |
-| Leg 2 | GND |
+All buttons: connect one leg to the GPIO, other leg to GND.
+No external resistors — the ESP32 uses internal pull-ups.
 
-No external resistor needed — GPIO0 uses the ESP32's internal pull-up.
+| Button | GPIO | Leg 1 | Leg 2 |
+|--------|------|-------|-------|
+| Scroll | GPIO25 | GPIO25 | GND |
+| Select | GPIO26 | GPIO26 | GND |
+| Power  | GPIO27 | GPIO27 | GND |
 
-For the **onboard boot button** (GPIO0 on the ESP32 dev board): this works
-as-is during prototyping. For a finished enclosure, solder a 6×6 mm tactile
-button to a short wire lead and route it to an accessible hole in the housing.
+> GPIO27 is an RTC GPIO (RTC_GPIO17 internally) which means it can wake the
+> ESP32 from deep sleep. Do not change the Power button to a non-RTC pin.
 
-**Button functions (firmware v0.4):**
+**Button functions:**
 
-| Press duration | Action |
-|----------------|--------|
-| Short < 1 s | Cycle club selection |
-| Medium 1–3 s | Open settings menu |
-| Long > 3 s | Enter calibration mode |
+| Screen | Scroll | Select | Power (hold 2 s) |
+|--------|--------|--------|------------------|
+| Splash | Next club | Open settings | Deep sleep |
+| Result | Next club | Dismiss result | Deep sleep |
+| Settings | Next item | Activate item | Save + exit |
+| Calibration | Threshold +10 | Threshold -10 | Save + exit |
 
 ---
 

@@ -13,7 +13,7 @@ All components from AliExpress unless noted. Prices approximate (SEK).
 | 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 1 | 270 |
 | 4 | LM358 op-amp IC or module | `LM358 op amp DIP8` or `LM358 module` | 1 | 10 |
 | 5 | 3.5" TFT display, SPI, ST7796, 480×320 | `3.5 inch TFT LCD SPI ST7796 480x320` | 1 | 120 |
-| 6 | Tactile push button, 6×6 mm, PCB mount | `6x6mm tactile push button switch` | 2 | 5 |
+| 6 | Tactile push button, 6×6 mm, PCB mount | `6x6mm tactile push button switch` | 4 | 8 |
 
 ---
 
@@ -61,14 +61,18 @@ included in a typical LM358 module and must be sourced separately.
 
 ## Notes
 
-### Button
-The firmware uses **GPIO0** (the onboard boot button) for all control input.
-During prototyping the onboard button works fine. For an enclosed device, solder
-one of the 6×6 mm tactile buttons to a wire lead and route it to a drilled hole
-in the housing. Connect one leg to GPIO0 and the other to GND — no resistor
-needed (the ESP32 has an internal pull-up).
+### Buttons
+The firmware (v0.5) uses **three separate buttons**:
 
-The second tactile button is a spare.
+| Button | GPIO | Function |
+|--------|------|---------|
+| Scroll | GPIO25 | Cycle clubs / navigate menus / threshold +10 in calibration |
+| Select | GPIO26 | Open settings / confirm selection / threshold -10 in calibration |
+| Power  | GPIO27 | Hold 2 s → deep sleep; press to wake (RTC GPIO) |
+
+Connect each button between the GPIO pin and GND. No external resistors needed —
+the ESP32 uses internal pull-ups. For an enclosed device, mount all three buttons
+in drilled holes on the side of the housing. Order 4 buttons (3 used + 1 spare).
 
 ### CDM324 radar
 - The **standard CDM324** (not the -UK or -F variant) is approved for 24 GHz
