@@ -131,6 +131,10 @@ f_doppler = 2 × v × f_carrier / c
 
 The ESP32 samples the Doppler IF signal at 40 kHz and runs a 1024-point FFT every ~25 ms. Two peaks are searched for in each frame — the lower frequency is interpreted as club head speed and the higher as ball speed. Carry and total distance are estimated using empirical per-club multipliers.
 
+## Mockups on the latest firmware
+<img width="3168" height="784" alt="openscope-ui" src="https://github.com/user-attachments/assets/02943d17-96c8-4225-9447-a9ee96954ebd" />
+
+
 ## License
 
 MIT
