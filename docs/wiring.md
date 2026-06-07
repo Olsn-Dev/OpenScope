@@ -5,14 +5,23 @@
 ## System Overview
 
 ```
-CDM324 (IF out) ──► LM358 preamp ──► GPIO34 (ADC)
-                                         │
-18650 battery ──► ESP32 board            ├──► GPIO23/18/5/2/4 (SPI)
-                  (onboard regulator)    │
-                                         └──► ST7796 TFT display
+CDM324-A (IF out) ──► LM358 preamp A ──► GPIO34 (ADC — Radar A, primary)
+CDM324-B (IF out) ──► LM358 preamp B ──► GPIO35 (ADC — Radar B, 30 mm offset)
+                                              │
+18650 battery ──► ESP32 board                ├──► GPIO23/18/5/2/4 (SPI)
+                  (onboard regulator)        │
+                                             └──► ST7796 TFT display
 
 Tactile button ──► GPIO0 ──► GND   (internal pull-up, no resistor needed)
 ```
+
+Both CDM324 modules are mounted side by side with **30 mm centre-to-centre** spacing.
+Each module has its own identical LM358 preamplifier circuit.
+The firmware samples Radar A and Radar B sequentially (each 25.6 ms / 1024 samples at
+40 kHz) and cross-validates the detected ball speed. If both radars agree within 10 %,
+the result is averaged and displayed as **DUAL OK** (green). If only one radar triggers
+it is shown as **SINGLE** (dimmed). If both trigger but disagree by more than 10 %,
+the frame is discarded as a false trigger.
 
 ---
 
