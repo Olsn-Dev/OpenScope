@@ -134,6 +134,9 @@ The ESP32 samples the Doppler IF signal at 40 kHz and runs a 1024-point FFT ever
 ## Mockups on the latest firmware
 <img width="3168" height="784" alt="openscope-ui" src="https://github.com/user-attachments/assets/02943d17-96c8-4225-9447-a9ee96954ebd" />
 
+### Dual-radar build (v0.5 — GPIO34 + GPIO35)
+<img width="1512" height="384" alt="openscope-ui-dual" src="docs/openscope-ui-dual.png" />
+
 
 ## License
 

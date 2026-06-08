@@ -23,8 +23,9 @@
 
 // ─── Pins ─────────────────────────────────────────────────────────────────────
 
-#define RADAR_ADC_PIN  34
-#define BTN_SCROLL     25   // Navigate / increase
+#define RADAR_ADC_PIN    34   // Radar A (primary)
+#define RADAR_ADC_PIN_B  35   // Radar B (secondary, 30 mm offset from A)
+#define BTN_SCROLL       25   // Navigate / increase
 #define BTN_SELECT     26   // Confirm / decrease
 #define BTN_POWER      27   // Power (RTC GPIO17 — supports ext0 wake)
 
@@ -45,6 +46,7 @@
 #define PEAK_THRESHOLD_DEFAULT  80.0f
 #define SMASH_MIN_RATIO         1.15f
 #define MIN_PEAK_SEP_HZ          800
+#define DUAL_AGREE_PCT          0.10f  // max allowed ball-Hz deviation between radars
 
 // ─── Display ──────────────────────────────────────────────────────────────────
 
@@ -94,10 +96,13 @@ static bool      g_use_mph   = false;
 
 static double vReal[FFT_SIZE];
 static double vImag[FFT_SIZE];
+static double vRealB[FFT_SIZE];
+static double vImagB[FFT_SIZE];
 
 // ─── Objects ──────────────────────────────────────────────────────────────────
 
-static ArduinoFFT<double> FFT_obj(vReal, vImag, FFT_SIZE, (double)SAMPLE_RATE);
+static ArduinoFFT<double> FFT_obj(vReal,  vImag,  FFT_SIZE, (double)SAMPLE_RATE);
+static ArduinoFFT<double> FFT_obj_B(vRealB, vImagB, FFT_SIZE, (double)SAMPLE_RATE);
 static TFT_eSPI           tft;
 static Preferences        prefs;
 
@@ -298,7 +303,7 @@ static void ui_splash()
 }
 
 static void ui_result(float ball_kmh, float club_kmh, float smash,
-                      float carry_m,  float total_m)
+                      float carry_m,  float total_m,  bool dual_ok)
 {
     tft.fillScreen(TFT_BLACK);
     draw_grid_lines();
@@ -313,7 +318,8 @@ static void ui_result(float ball_kmh, float club_kmh, float smash,
     }
 
     snprintf(buf, sizeof(buf), "%.0f", disp_speed(ball_kmh));
-    draw_tile(1, 0, "Ball", buf, speed_unit(), TFT_WHITE);
+    uint16_t ball_col = dual_ok ? TFT_GREEN : TFT_WHITE;
+    draw_tile(1, 0, "Ball", buf, speed_unit(), ball_col);
 
     if (smash > 0.0f) {
         snprintf(buf, sizeof(buf), "%.2f", smash);
@@ -327,6 +333,11 @@ static void ui_result(float ball_kmh, float club_kmh, float smash,
     snprintf(buf, sizeof(buf), "%.0f", disp_dist(total_m));
     draw_tile(1, 1, "Total", buf, dist_unit(), TFT_WHITE);
     draw_club_tile(2, 1);
+
+    tft.setTextDatum(BR_DATUM);
+    tft.setTextFont(1);
+    tft.setTextColor(dual_ok ? TFT_GREEN : COL_DIM, TFT_BLACK);
+    tft.drawString(dual_ok ? "DUAL OK" : "SINGLE", SCR_W - 4, SCR_H - 2);
 }
 
 // ─── UI — Settings ────────────────────────────────────────────────────────────
@@ -499,6 +510,12 @@ static void sample_radar()
         vImag[i] = 0.0;
         while ((micros() - t0) < period_us) {}
     }
+    for (int i = 0; i < FFT_SIZE; i++) {
+        uint32_t t0 = micros();
+        vRealB[i] = (double)(analogRead(RADAR_ADC_PIN_B) - 2048);
+        vImagB[i] = 0.0;
+        while ((micros() - t0) < period_us) {}
+    }
 }
 
 static void run_fft()
@@ -506,40 +523,39 @@ static void run_fft()
     FFT_obj.windowing(FFTWindow::Hamming, FFTDirection::Forward);
     FFT_obj.compute(FFTDirection::Forward);
     FFT_obj.complexToMagnitude();
+    FFT_obj_B.windowing(FFTWindow::Hamming, FFTDirection::Forward);
+    FFT_obj_B.compute(FFTDirection::Forward);
+    FFT_obj_B.complexToMagnitude();
 }
 
 struct Peak { int bin; double mag; double hz; };
 
-static Peak find_best_peak(int bin_lo, int bin_hi, int excl_bin, int excl_r)
+static Peak find_best_peak(const double* buf, int bin_lo, int bin_hi, int excl_bin, int excl_r)
 {
     Peak p = { -1, 0.0, 0.0 };
     for (int i = bin_lo; i <= bin_hi; i++) {
         if (excl_bin >= 0 && abs(i - excl_bin) < excl_r) continue;
-        if (vReal[i] > p.mag) { p.mag = vReal[i]; p.bin = i; }
+        if (buf[i] > p.mag) { p.mag = buf[i]; p.bin = i; }
     }
     if (p.bin < 0 || p.mag < (double)g_threshold) return { -1, 0.0, 0.0 };
-    double a = (p.bin > 0)          ? vReal[p.bin-1] : 0.0;
-    double b = vReal[p.bin];
-    double c = (p.bin < FFT_SIZE/2) ? vReal[p.bin+1] : 0.0;
+    double a = (p.bin > 0)          ? buf[p.bin-1] : 0.0;
+    double b = buf[p.bin];
+    double c = (p.bin < FFT_SIZE/2) ? buf[p.bin+1] : 0.0;
     double d = a - 2.0*b + c;
     p.hz = ((double)p.bin + (d != 0.0 ? 0.5*(a-c)/d : 0.0)) * SAMPLE_RATE / FFT_SIZE;
     return p;
 }
 
-static bool detect_speeds(double& ball_hz, double& club_hz)
+// Extract ball_hz and club_hz from one FFT magnitude buffer.
+static bool get_peaks_from_buf(const double* buf, double& ball_hz, double& club_hz)
 {
-    run_fft();
     int bin_lo = (int)((double)MIN_DETECT_HZ / SAMPLE_RATE * FFT_SIZE);
     int bin_hi = min((int)((double)MAX_DETECT_HZ / SAMPLE_RATE * FFT_SIZE), FFT_SIZE/2-1);
     int sep    = max(5, (int)((double)MIN_PEAK_SEP_HZ / SAMPLE_RATE * FFT_SIZE));
 
-    Peak p1 = find_best_peak(bin_lo, bin_hi, -1, 0);
+    Peak p1 = find_best_peak(buf, bin_lo, bin_hi, -1, 0);
     if (p1.bin < 0) return false;
-    Peak p2 = find_best_peak(bin_lo, bin_hi, p1.bin, sep);
-
-    Serial.printf("[FFT] p1 bin=%d mag=%.1f hz=%.0f", p1.bin, p1.mag, p1.hz);
-    if (p2.bin >= 0) Serial.printf(" | p2 bin=%d mag=%.1f hz=%.0f", p2.bin, p2.mag, p2.hz);
-    Serial.println();
+    Peak p2 = find_best_peak(buf, bin_lo, bin_hi, p1.bin, sep);
 
     if (p2.bin >= 0) {
         Peak lo = (p1.hz < p2.hz) ? p1 : p2;
@@ -549,6 +565,44 @@ static bool detect_speeds(double& ball_hz, double& club_hz)
         }
     }
     ball_hz = p1.hz; club_hz = 0.0;
+    return true;
+}
+
+// Dual-radar detection with cross-validation.
+// confidence: 2 = both radars agreed (averaged), 1 = single radar only.
+// Returns false if no hit or if radars disagree beyond DUAL_AGREE_PCT (false trigger).
+static bool detect_speeds(double& ball_hz, double& club_hz, int& confidence)
+{
+    run_fft();
+
+    double ball_a = 0.0, club_a = 0.0;
+    double ball_b = 0.0, club_b = 0.0;
+    bool hit_a = get_peaks_from_buf(vReal,  ball_a, club_a);
+    bool hit_b = get_peaks_from_buf(vRealB, ball_b, club_b);
+
+    if (!hit_a && !hit_b) return false;
+
+    if (hit_a && hit_b) {
+        float diff_pct = fabsf((float)(ball_a - ball_b)) / (float)ball_a;
+        if (diff_pct > DUAL_AGREE_PCT) {
+            Serial.printf("[DUAL] Mismatch A=%.0f B=%.0f (%.1f%%) — rejected\n",
+                          ball_a, ball_b, diff_pct * 100.0f);
+            return false;
+        }
+        ball_hz    = (ball_a + ball_b) * 0.5;
+        if      (club_a > 0.0 && club_b > 0.0) club_hz = (club_a + club_b) * 0.5;
+        else if (club_a > 0.0)                  club_hz = club_a;
+        else if (club_b > 0.0)                  club_hz = club_b;
+        else                                     club_hz = 0.0;
+        confidence = 2;
+        Serial.printf("[DUAL] A=%.0f B=%.0f avg=%.0f Hz\n", ball_a, ball_b, ball_hz);
+    } else if (hit_a) {
+        ball_hz = ball_a; club_hz = club_a; confidence = 1;
+        Serial.printf("[DUAL] Single A=%.0f Hz\n", ball_hz);
+    } else {
+        ball_hz = ball_b; club_hz = club_b; confidence = 1;
+        Serial.printf("[DUAL] Single B=%.0f Hz\n", ball_hz);
+    }
     return true;
 }
 
@@ -648,7 +702,8 @@ void setup()
     // ADC: 12-bit, 11 dB attenuation → ~0–3.1 V
     // On newer ESP-IDF: replace ADC_11db with ADC_ATTEN_DB_12 if it fails.
     analogReadResolution(12);
-    analogSetPinAttenuation(RADAR_ADC_PIN, ADC_11db);
+    analogSetPinAttenuation(RADAR_ADC_PIN,   ADC_11db);
+    analogSetPinAttenuation(RADAR_ADC_PIN_B, ADC_11db);
 
     nvs_load();
 
@@ -685,20 +740,21 @@ void loop()
 
     // ── Radar detection ──────────────────────────────────────────────────────
     sample_radar();
-    double ball_hz = 0.0, club_hz = 0.0;
-    if (!detect_speeds(ball_hz, club_hz)) return;
+    double ball_hz = 0.0, club_hz = 0.0; int confidence = 0;
+    if (!detect_speeds(ball_hz, club_hz, confidence)) return;
 
     float ball_kmh = (float)(ball_hz * HZ_TO_KMH);
     float club_kmh = (club_hz > 0.0) ? (float)(club_hz * HZ_TO_KMH) : 0.0f;
     float smash    = (club_kmh > 0.0f) ? (ball_kmh / club_kmh) : 0.0f;
     float carry_m  = ball_kmh * CLUBS[g_club].carry_f;
     float total_m  = carry_m  * (1.0f + CLUBS[g_club].roll_f);
+    bool  dual_ok  = (confidence == 2);
 
-    Serial.printf("[HIT] Ball %.1f km/h | Club %.1f km/h | Smash %.2f | Carry %.0f m | Total %.0f m\n",
-                  ball_kmh, club_kmh, smash, carry_m, total_m);
+    Serial.printf("[HIT] Ball %.1f km/h | Club %.1f km/h | Smash %.2f | Carry %.0f m | Total %.0f m | %s\n",
+                  ball_kmh, club_kmh, smash, carry_m, total_m, dual_ok ? "DUAL" : "SINGLE");
 
     record_carry(g_club, carry_m);
-    ui_result(ball_kmh, club_kmh, smash, carry_m, total_m);
+    ui_result(ball_kmh, club_kmh, smash, carry_m, total_m, dual_ok);
 
     // ── Hold result, remain responsive ───────────────────────────────────────
     uint32_t t0 = millis();
