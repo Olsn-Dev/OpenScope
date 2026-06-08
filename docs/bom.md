@@ -1,4 +1,4 @@
-# Bill of Materials — OpenScope v0.4
+# Bill of Materials — OpenScope v0.6
 
 All components from AliExpress unless noted. Prices approximate (SEK).
 
@@ -10,7 +10,7 @@ All components from AliExpress unless noted. Prices approximate (SEK).
 |---|-----------|----------------------|-----|--------------|
 | 1 | ESP32 dev board with 18650 battery holder | `ESP32 18650 battery holder board` | 1 | 90 |
 | 2 | 18650 Li-Ion battery, 3000 mAh, protected | `18650 3000mAh protected battery` | 1 | 60 |
-| 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 1 | 270 |
+| 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 2 | 540 |
 | 4 | LM358 op-amp IC or module | `LM358 op amp DIP8` or `LM358 module` | 1 | 10 |
 | 5 | 3.5" TFT display, SPI, ST7796, 480×320 | `3.5 inch TFT LCD SPI ST7796 480x320` | 1 | 120 |
 | 6 | Tactile push button, 6×6 mm, PCB mount | `6x6mm tactile push button switch` | 4 | 8 |
@@ -19,17 +19,17 @@ All components from AliExpress unless noted. Prices approximate (SEK).
 
 ## LM358 Preamplifier Passives
 
-The preamp amplifies the CDM324 IF signal by ×100 and bandpass-filters it to
-300 Hz – 18 kHz (covers ~7–400 km/h ball speeds). These components are **not**
-included in a typical LM358 module and must be sourced separately.
+The LM358 DIP-8 contains **two op-amps** — one preamp per radar, both in the
+same IC. Each channel amplifies the CDM324 IF signal ×100 and bandpass-filters
+it to 300 Hz – 16 kHz (covers ~7–360 km/h).
 
 | Component | Value | Qty | Purpose |
 |-----------|-------|-----|---------|
-| Resistor | 1 kΩ | 2 | Gain lower resistor R1 (each stage) |
-| Resistor | 100 kΩ | 4 | Gain upper resistor R2 + bias divider (R3, R4) |
-| Capacitor | 1 µF, film or electrolytic | 2 | AC input coupling (high-pass ~160 Hz) |
-| Capacitor | 100 pF, ceramic | 2 | Feedback cap across R2 (low-pass ~16 kHz) |
-| Capacitor | 10 µF, electrolytic | 1 | Bias midpoint bypass |
+| Resistor | 1 kΩ | 2 | Gain lower resistor R1 (one per channel) |
+| Resistor | 100 kΩ | 8 | R2 (feedback) + R3, R4 (bias divider) × 2 channels |
+| Capacitor | 1 µF, film or electrolytic | 2 | AC coupling (high-pass ~160 Hz) |
+| Capacitor | 100 pF, ceramic | 2 | Feedback cap (low-pass ~16 kHz) |
+| Capacitor | 10 µF, electrolytic | 2 | Bias midpoint bypass (one per channel) |
 | Capacitor | 100 nF, ceramic | 2 | VCC decoupling |
 
 > All resistors 0.25 W, 5% tolerance or better. A mixed resistor/capacitor
@@ -52,10 +52,10 @@ included in a typical LM358 module and must be sourced separately.
 
 | Category | ~Price (SEK) |
 |----------|-------------|
-| Main components | 555 |
+| Main components | 825 |
 | Preamp passives | 25 |
 | Wiring & assembly | 60 |
-| **Total** | **~640 SEK** |
+| **Total** | **~910 SEK** |
 
 ---
 
@@ -74,11 +74,18 @@ Connect each button between the GPIO pin and GND. No external resistors needed �
 the ESP32 uses internal pull-ups. For an enclosed device, mount all three buttons
 in drilled holes on the side of the housing. Order 4 buttons (3 used + 1 spare).
 
-### CDM324 radar
+### CDM324 radar (×2)
+Two CDM324 modules are used for launch angle measurement:
+- **Radar A (GPIO34):** mounted horizontally — measures ball speed.
+- **Radar B (GPIO35):** mounted at 20° above horizontal — together with A,
+  allows the firmware to compute launch angle via the Doppler frequency ratio.
+
+See `docs/wiring.md` for the full mounting diagram and angle instructions.
+
 - The **standard CDM324** (not the -UK or -F variant) is approved for 24 GHz
   ISM use in Sweden and the EU. No licence required.
-- Supply the CDM324 from the ESP32 board's 5V rail (VUSB / VBAT boosted).
-- Do **not** connect the CDM324 IF pin directly to the ESP32 ADC — always via
+- Supply both CDM324 modules from the ESP32 board's 5V rail.
+- Do **not** connect any CDM324 IF pin directly to the ESP32 ADC — always via
   the LM358 preamp circuit.
 
 ### LM358 preamp bandwidth

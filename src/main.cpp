@@ -1,8 +1,20 @@
-// OpenScope — DIY Golf Launch Monitor  v0.5
+// OpenScope — DIY Golf Launch Monitor  v0.6
 // ESP32 + CDM324 24 GHz Doppler Radar + ST7796 3.5" TFT
 //
 // Signal path:
-//   CDM324 IF → LM358 preamp (×100, 300 Hz–18 kHz bandpass) → GPIO34 (ADC)
+//   CDM324 A (horizontal)    → LM358 op-amp 1 preamp → GPIO34 (ADC)
+//   CDM324 B (angled 20° up) → LM358 op-amp 2 preamp → GPIO35 (ADC)
+//   Both preamps share one LM358 DIP-8 IC (two op-amps per package).
+//
+// Radar placement:
+//   Radar A: aimed horizontally at the ball impact point.
+//   Radar B: aimed RADAR_B_ANGLE_DEG (default 20°) above horizontal.
+//   Place both radars ~10 cm behind the tee, side by side, centred on
+//   the expected ball path. Radar B must tilt upward by exactly the
+//   angle set in RADAR_B_ANGLE_DEG — use a printed wedge or protractor.
+//
+//   Physics: f_A = 2·v·cos(α)·fc/c,  f_B = 2·v·cos(α−θ)·fc/c
+//   Ratio f_A/f_B = cos(α)/cos(α−θ)  →  α solved by binary search.
 //
 // Buttons:
 //   GPIO25  SCROLL  — cycle clubs / navigate menus / threshold +10 in cal
@@ -23,11 +35,11 @@
 
 // ─── Pins ─────────────────────────────────────────────────────────────────────
 
-#define RADAR_ADC_PIN    34   // Radar A (primary)
-#define RADAR_ADC_PIN_B  35   // Radar B (secondary, 30 mm offset from A)
+#define RADAR_ADC_PIN    34   // Radar A — horizontal (primary speed)
+#define RADAR_ADC_PIN_B  35   // Radar B — angled upward (launch angle)
 #define BTN_SCROLL       25   // Navigate / increase
-#define BTN_SELECT     26   // Confirm / decrease
-#define BTN_POWER      27   // Power (RTC GPIO17 — supports ext0 wake)
+#define BTN_SELECT       26   // Confirm / decrease
+#define BTN_POWER        27   // Power (RTC GPIO17 — supports ext0 wake)
 
 // ─── Sampling & FFT ───────────────────────────────────────────────────────────
 
@@ -39,6 +51,15 @@
 #define HZ_TO_KMH  0.022384f
 #define HZ_TO_MPH  0.013912f
 
+// ─── Launch angle ─────────────────────────────────────────────────────────────
+// RADAR_B_ANGLE_DEG must match the physical mounting angle of Radar B.
+// Adjust if you mount Radar B at a different elevation.
+
+#define RADAR_B_ANGLE_DEG  20.0f   // degrees above horizontal
+#define DEG_TO_RAD         0.017453293f
+#define LAUNCH_MIN_DEG     2.0f    // below this → treat as no-detection
+#define LAUNCH_MAX_DEG     55.0f   // above this → treat as no-detection
+
 // ─── Detection ────────────────────────────────────────────────────────────────
 
 #define MIN_DETECT_HZ           1800
@@ -46,7 +67,6 @@
 #define PEAK_THRESHOLD_DEFAULT  80.0f
 #define SMASH_MIN_RATIO         1.15f
 #define MIN_PEAK_SEP_HZ          800
-#define DUAL_AGREE_PCT          0.10f  // max allowed ball-Hz deviation between radars
 
 // ─── Display ──────────────────────────────────────────────────────────────────
 
@@ -63,24 +83,34 @@
 #define COL_SEL_BG   0x1082
 
 // ─── Clubs ────────────────────────────────────────────────────────────────────
+// carry_f:     empirical factor for typical launch angle (carry_m = ball_kmh × carry_f)
+// roll_f:      roll fraction of carry
+// typ_launch:  typical launch angle [°] for this club — used to scale carry
+//              when a real launch angle is measured
 
-struct Club { const char* name; const char* abbr; float carry_f; float roll_f; };
+struct Club {
+    const char* name;
+    const char* abbr;
+    float carry_f;
+    float roll_f;
+    float typ_launch;
+};
 
 static const Club CLUBS[] = {
-    { "Driver", "D",   1.35f, 0.10f },
-    { "3-Wood", "3W",  1.20f, 0.08f },
-    { "5-Wood", "5W",  1.10f, 0.08f },
-    { "3-Iron", "3I",  0.95f, 0.05f },
-    { "4-Iron", "4I",  0.90f, 0.05f },
-    { "5-Iron", "5I",  0.82f, 0.05f },
-    { "6-Iron", "6I",  0.75f, 0.04f },
-    { "7-Iron", "7I",  0.68f, 0.04f },
-    { "8-Iron", "8I",  0.60f, 0.03f },
-    { "9-Iron", "9I",  0.52f, 0.02f },
-    { "PW",     "PW",  0.45f, 0.02f },
-    { "GW",     "GW",  0.40f, 0.01f },
-    { "SW",     "SW",  0.35f, 0.01f },
-    { "LW",     "LW",  0.30f, 0.01f },
+    { "Driver", "D",   1.35f, 0.10f, 12.0f },
+    { "3-Wood", "3W",  1.20f, 0.08f, 13.0f },
+    { "5-Wood", "5W",  1.10f, 0.08f, 14.0f },
+    { "3-Iron", "3I",  0.95f, 0.05f, 16.0f },
+    { "4-Iron", "4I",  0.90f, 0.05f, 17.0f },
+    { "5-Iron", "5I",  0.82f, 0.05f, 18.0f },
+    { "6-Iron", "6I",  0.75f, 0.04f, 20.0f },
+    { "7-Iron", "7I",  0.68f, 0.04f, 21.0f },
+    { "8-Iron", "8I",  0.60f, 0.03f, 23.0f },
+    { "9-Iron", "9I",  0.52f, 0.02f, 25.0f },
+    { "PW",     "PW",  0.45f, 0.02f, 28.0f },
+    { "GW",     "GW",  0.40f, 0.01f, 32.0f },
+    { "SW",     "SW",  0.35f, 0.01f, 35.0f },
+    { "LW",     "LW",  0.30f, 0.01f, 40.0f },
 };
 #define NUM_CLUBS  14
 
@@ -101,17 +131,17 @@ static double vImagB[FFT_SIZE];
 
 // ─── Objects ──────────────────────────────────────────────────────────────────
 
-static ArduinoFFT<double> FFT_obj(vReal,  vImag,  FFT_SIZE, (double)SAMPLE_RATE);
+static ArduinoFFT<double> FFT_obj(vReal,   vImag,  FFT_SIZE, (double)SAMPLE_RATE);
 static ArduinoFFT<double> FFT_obj_B(vRealB, vImagB, FFT_SIZE, (double)SAMPLE_RATE);
 static TFT_eSPI           tft;
 static Preferences        prefs;
 
 // ─── Unit helpers ─────────────────────────────────────────────────────────────
 
-static inline float       disp_speed(float kmh)   { return g_use_mph ? kmh * 0.621371f   : kmh; }
-static inline float       disp_dist(float m)       { return g_use_mph ? m   * 1.09361f    : m; }
-static inline const char* speed_unit()             { return g_use_mph ? "mph" : "km/h"; }
-static inline const char* dist_unit()              { return g_use_mph ? "yds" : "m"; }
+static inline float       disp_speed(float kmh) { return g_use_mph ? kmh * 0.621371f : kmh; }
+static inline float       disp_dist(float m)    { return g_use_mph ? m   * 1.09361f  : m; }
+static inline const char* speed_unit()          { return g_use_mph ? "mph" : "km/h"; }
+static inline const char* dist_unit()           { return g_use_mph ? "yds" : "m"; }
 
 // ─── NVS ──────────────────────────────────────────────────────────────────────
 
@@ -174,14 +204,10 @@ static void reset_stats(int idx)
 static bool s_prev_scroll = false;
 static bool s_prev_select = false;
 
-// Returns true on a clean falling-edge press (debounced).
 static bool scroll_pressed()
 {
     bool cur = (digitalRead(BTN_SCROLL) == LOW);
-    if (cur && !s_prev_scroll) {
-        delay(25);
-        cur = (digitalRead(BTN_SCROLL) == LOW);
-    }
+    if (cur && !s_prev_scroll) { delay(25); cur = (digitalRead(BTN_SCROLL) == LOW); }
     bool edge = cur && !s_prev_scroll;
     s_prev_scroll = cur;
     return edge;
@@ -190,17 +216,12 @@ static bool scroll_pressed()
 static bool select_pressed()
 {
     bool cur = (digitalRead(BTN_SELECT) == LOW);
-    if (cur && !s_prev_select) {
-        delay(25);
-        cur = (digitalRead(BTN_SELECT) == LOW);
-    }
+    if (cur && !s_prev_select) { delay(25); cur = (digitalRead(BTN_SELECT) == LOW); }
     bool edge = cur && !s_prev_select;
     s_prev_select = cur;
     return edge;
 }
 
-// Returns true if the power button is held for hold_ms.
-// Blocks until released or timeout. Does NOT trigger on short taps.
 static bool power_held(uint32_t hold_ms = 2000)
 {
     if (digitalRead(BTN_POWER) != LOW) return false;
@@ -212,7 +233,7 @@ static bool power_held(uint32_t hold_ms = 2000)
         }
         delay(10);
     }
-    return false;   // released before threshold — ignore
+    return false;
 }
 
 // ─── Power management ─────────────────────────────────────────────────────────
@@ -227,8 +248,6 @@ static void go_to_sleep()
     tft.drawString("Goodbye", SCR_W / 2, SCR_H / 2);
     delay(700);
     tft.fillScreen(TFT_BLACK);
-
-    // Wake when BTN_POWER (GPIO27) goes LOW
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, 0);
     Serial.println("[PWR] Entering deep sleep");
     esp_deep_sleep_start();
@@ -274,15 +293,22 @@ static void draw_club_tile(int col, int row)
 }
 
 // ─── UI — Normal screens ──────────────────────────────────────────────────────
+//
+// Tile layout (all screens):
+//   ┌──────────┬──────────┬──────────┐
+//   │  Club    │  Ball    │  Launch  │  ← row 0
+//   ├──────────┼──────────┼──────────┤
+//   │  Carry   │  Total   │  [Club]  │  ← row 1
+//   └──────────┴──────────┴──────────┘
 
 static void ui_splash()
 {
     tft.fillScreen(TFT_BLACK);
     draw_grid_lines();
 
-    draw_tile(0, 0, "Club",  "--", speed_unit(), TFT_WHITE, true);
-    draw_tile(1, 0, "Ball",  "--", speed_unit(), TFT_WHITE, true);
-    draw_tile(2, 0, "Smash", "--", "Factor",     TFT_WHITE, true);
+    draw_tile(0, 0, "Club",   "--", speed_unit(), TFT_WHITE, true);
+    draw_tile(1, 0, "Ball",   "--", speed_unit(), TFT_WHITE, true);
+    draw_tile(2, 0, "Launch", "--", "\xb0",        TFT_WHITE, true);  // °
 
     const ClubStats& s = g_stats[g_club];
     char avg[8], best[8];
@@ -302,14 +328,16 @@ static void ui_splash()
     tft.drawString("SWING WHEN READY", SCR_W / 2, ROW_H + 4);
 }
 
-static void ui_result(float ball_kmh, float club_kmh, float smash,
-                      float carry_m,  float total_m,  bool dual_ok)
+static void ui_result(float ball_kmh, float club_kmh,
+                      float carry_m,  float total_m,
+                      float launch_deg)
 {
     tft.fillScreen(TFT_BLACK);
     draw_grid_lines();
 
     char buf[12];
 
+    // Club speed
     if (club_kmh > 0.0f) {
         snprintf(buf, sizeof(buf), "%.0f", disp_speed(club_kmh));
         draw_tile(0, 0, "Club", buf, speed_unit(), TFT_WHITE);
@@ -317,27 +345,38 @@ static void ui_result(float ball_kmh, float club_kmh, float smash,
         draw_tile(0, 0, "Club", "--", speed_unit(), TFT_WHITE, true);
     }
 
+    // Ball speed
     snprintf(buf, sizeof(buf), "%.0f", disp_speed(ball_kmh));
-    uint16_t ball_col = dual_ok ? TFT_GREEN : TFT_WHITE;
-    draw_tile(1, 0, "Ball", buf, speed_unit(), ball_col);
+    draw_tile(1, 0, "Ball", buf, speed_unit(), TFT_WHITE);
 
-    if (smash > 0.0f) {
-        snprintf(buf, sizeof(buf), "%.2f", smash);
-        draw_tile(2, 0, "Smash", buf, "Factor", TFT_WHITE);
+    // Launch angle — green when measured, dimmed when estimated
+    if (launch_deg > 0.0f) {
+        snprintf(buf, sizeof(buf), "%.1f", launch_deg);
+        draw_tile(2, 0, "Launch", buf, "\xb0", TFT_GREEN);
     } else {
-        draw_tile(2, 0, "Smash", "--", "Factor", TFT_WHITE, true);
+        draw_tile(2, 0, "Launch", "--", "\xb0", TFT_WHITE, true);
     }
 
+    // Carry
     snprintf(buf, sizeof(buf), "%.0f", disp_dist(carry_m));
     draw_tile(0, 1, "Carry", buf, dist_unit(), TFT_WHITE);
+
+    // Total
     snprintf(buf, sizeof(buf), "%.0f", disp_dist(total_m));
     draw_tile(1, 1, "Total", buf, dist_unit(), TFT_WHITE);
+
     draw_club_tile(2, 1);
 
-    tft.setTextDatum(BR_DATUM);
-    tft.setTextFont(1);
-    tft.setTextColor(dual_ok ? TFT_GREEN : COL_DIM, TFT_BLACK);
-    tft.drawString(dual_ok ? "DUAL OK" : "SINGLE", SCR_W - 4, SCR_H - 2);
+    // Small smash factor footnote bottom-right
+    if (club_kmh > 0.0f) {
+        float smash = ball_kmh / club_kmh;
+        char sm[16];
+        snprintf(sm, sizeof(sm), "smash %.2f", smash);
+        tft.setTextDatum(BR_DATUM);
+        tft.setTextFont(1);
+        tft.setTextColor(COL_UNIT, TFT_BLACK);
+        tft.drawString(sm, SCR_W - 4, SCR_H - 2);
+    }
 }
 
 // ─── UI — Settings ────────────────────────────────────────────────────────────
@@ -359,24 +398,21 @@ static void ui_settings_draw(int sel, bool reset_done = false)
     snprintf(unit_val,  sizeof(unit_val),  "%s", g_use_mph ? "mph" : "km/h");
     snprintf(reset_val, sizeof(reset_val), "%s", reset_done ? "Done!" : CLUBS[g_club].name);
 
-    const char* labels[] = { "Units",       "Reset Stats",  "Calibration" };
-    const char* values[] = { unit_val,       reset_val,      "\x10"        };
+    const char* labels[] = { "Units",    "Reset Stats",  "Calibration" };
+    const char* values[] = { unit_val,    reset_val,      "\x10"        };
 
     for (int i = 0; i < 3; i++) {
         int y = 68 + i * 74;
         bool active = (i == sel);
-
         if (active) {
             tft.fillRect(0, y - 2, SCR_W, 54, COL_SEL_BG);
             tft.fillRect(0, y - 2, 4,     54, TFT_CYAN);
         }
-
         uint16_t bg = active ? COL_SEL_BG : TFT_BLACK;
         tft.setTextDatum(ML_DATUM);
         tft.setTextFont(4);
         tft.setTextColor(active ? TFT_WHITE : COL_UNIT, bg);
         tft.drawString(labels[i], 20, y + 22);
-
         uint16_t vc = active ? TFT_CYAN : COL_DIM;
         if (i == 1 && reset_done) vc = TFT_GREEN;
         tft.setTextColor(vc, bg);
@@ -387,7 +423,7 @@ static void ui_settings_draw(int sel, bool reset_done = false)
     tft.drawFastHLine(0, SCR_H - 22, SCR_W, COL_DIV);
     tft.setTextDatum(BC_DATUM);
     tft.setTextFont(2); tft.setTextColor(COL_DIM, TFT_BLACK);
-    tft.drawString("OpenScope v0.5", SCR_W / 2, SCR_H - 4);
+    tft.drawString("OpenScope v0.6", SCR_W / 2, SCR_H - 4);
 }
 
 // ─── UI — Calibration ─────────────────────────────────────────────────────────
@@ -439,8 +475,8 @@ static void ui_cal_update(double peak_hz, double peak_mag,
                           (mag >= g_threshold) ? TFT_RED : (uint16_t)0x0460);
     }
 
-    // Clamp to top of spectrum so the line is always visible, even before
-    // the first swing (when max_seen ≈ 0 and scale ≈ 1).
+    // Threshold line — clamped to top of spectrum so it is always visible
+    // even before the first swing when max_seen ≈ 0.
     int ty = CAL_SPEC_Y + CAL_SPEC_H - 1 - (int)(g_threshold * scale);
     if (ty < CAL_SPEC_Y) ty = CAL_SPEC_Y;
     tft.drawFastHLine(CAL_SPEC_X, ty, CAL_SPEC_W, TFT_YELLOW);
@@ -547,7 +583,6 @@ static Peak find_best_peak(const double* buf, int bin_lo, int bin_hi, int excl_b
     return p;
 }
 
-// Extract ball_hz and club_hz from one FFT magnitude buffer.
 static bool get_peaks_from_buf(const double* buf, double& ball_hz, double& club_hz)
 {
     int bin_lo = (int)((double)MIN_DETECT_HZ / SAMPLE_RATE * FFT_SIZE);
@@ -569,10 +604,49 @@ static bool get_peaks_from_buf(const double* buf, double& ball_hz, double& club_
     return true;
 }
 
-// Dual-radar detection with cross-validation.
-// confidence: 2 = both radars agreed (averaged), 1 = single radar only.
-// Returns false if no hit or if radars disagree beyond DUAL_AGREE_PCT (false trigger).
-static bool detect_speeds(double& ball_hz, double& club_hz, int& confidence)
+// ─── Launch angle solver ──────────────────────────────────────────────────────
+//
+// Radar A (horizontal) measures:   hz_a = v · cos(α)
+// Radar B (θ above horizontal):    hz_b = v · cos(α − θ)
+// Ratio:   hz_a / hz_b = cos(α) / cos(α − θ)
+//
+// This ratio is monotonically decreasing in α for α ∈ [0°, 90°],
+// so a binary search converges reliably.
+//
+// Returns the launch angle in degrees, or -1.0f if the radars disagree
+// or the result falls outside [LAUNCH_MIN_DEG, LAUNCH_MAX_DEG].
+
+static float compute_launch_angle(double hz_a, double hz_b)
+{
+    if (hz_b <= 0.0) return -1.0f;
+    const float theta = RADAR_B_ANGLE_DEG * DEG_TO_RAD;
+    const float ratio = (float)(hz_a / hz_b);
+
+    // Clamp ratio to physically possible range to avoid runaway
+    float ratio_at_min = cosf(LAUNCH_MIN_DEG * DEG_TO_RAD) /
+                         cosf((LAUNCH_MIN_DEG - RADAR_B_ANGLE_DEG) * DEG_TO_RAD);
+    float ratio_at_max = cosf(LAUNCH_MAX_DEG * DEG_TO_RAD) /
+                         cosf((LAUNCH_MAX_DEG - RADAR_B_ANGLE_DEG) * DEG_TO_RAD);
+    if (ratio > ratio_at_min || ratio < ratio_at_max) return -1.0f;
+
+    float lo = LAUNCH_MIN_DEG * DEG_TO_RAD;
+    float hi = LAUNCH_MAX_DEG * DEG_TO_RAD;
+    for (int iter = 0; iter < 40; iter++) {
+        float mid = (lo + hi) * 0.5f;
+        float f   = cosf(mid) / cosf(mid - theta);
+        if (f > ratio) lo = mid; else hi = mid;
+    }
+    return (lo + hi) * 0.5f / DEG_TO_RAD;
+}
+
+// ─── Full detection ───────────────────────────────────────────────────────────
+//
+// Returns false if no shot detected.
+// ball_hz  — from Radar A (horizontal component of ball velocity)
+// club_hz  — lower-frequency peak if a club+ball pair was found, else 0
+// launch_deg — computed launch angle in degrees, or -1 if unavailable
+
+static bool detect_speeds(double& ball_hz, double& club_hz, float& launch_deg)
 {
     run_fft();
 
@@ -583,29 +657,22 @@ static bool detect_speeds(double& ball_hz, double& club_hz, int& confidence)
 
     if (!hit_a && !hit_b) return false;
 
-    if (hit_a && hit_b) {
-        float diff_pct = fabsf((float)(ball_a - ball_b)) / (float)ball_a;
-        if (diff_pct > DUAL_AGREE_PCT) {
-            // Radars disagree — B may have picked up a spurious reflection.
-            // Fall back to radar A only rather than discarding the valid hit.
-            Serial.printf("[DUAL] Mismatch A=%.0f B=%.0f (%.1f%%) — using A only\n",
-                          ball_a, ball_b, diff_pct * 100.0f);
-            ball_hz = ball_a; club_hz = club_a; confidence = 1;
-            return true;
+    // Primary speed always from Radar A (horizontal → true forward velocity)
+    ball_hz  = hit_a ? ball_a : ball_b;
+    club_hz  = hit_a ? club_a : (hit_b ? club_b : 0.0);
+    launch_deg = -1.0f;
+
+    if (hit_a && hit_b && ball_a > 0.0 && ball_b > 0.0) {
+        float alpha = compute_launch_angle(ball_a, ball_b);
+        if (alpha >= LAUNCH_MIN_DEG && alpha <= LAUNCH_MAX_DEG) {
+            launch_deg = alpha;
+            Serial.printf("[LAUNCH] A=%.0f Hz  B=%.0f Hz  ratio=%.4f  α=%.1f°\n",
+                          ball_a, ball_b, ball_a / ball_b, alpha);
+        } else {
+            Serial.printf("[LAUNCH] Angle out of range (%.1f°) — using empirical carry\n", alpha);
         }
-        ball_hz    = (ball_a + ball_b) * 0.5;
-        if      (club_a > 0.0 && club_b > 0.0) club_hz = (club_a + club_b) * 0.5;
-        else if (club_a > 0.0)                  club_hz = club_a;
-        else if (club_b > 0.0)                  club_hz = club_b;
-        else                                     club_hz = 0.0;
-        confidence = 2;
-        Serial.printf("[DUAL] A=%.0f B=%.0f avg=%.0f Hz\n", ball_a, ball_b, ball_hz);
-    } else if (hit_a) {
-        ball_hz = ball_a; club_hz = club_a; confidence = 1;
-        Serial.printf("[DUAL] Single A=%.0f Hz\n", ball_hz);
     } else {
-        ball_hz = ball_b; club_hz = club_b; confidence = 1;
-        Serial.printf("[DUAL] Single B=%.0f Hz\n", ball_hz);
+        Serial.printf("[LAUNCH] Single radar only — using empirical carry\n");
     }
     return true;
 }
@@ -697,7 +764,7 @@ static void settings_loop()
 void setup()
 {
     Serial.begin(115200);
-    Serial.println("\n[OpenScope] v0.5 booting");
+    Serial.println("\n[OpenScope] v0.6 booting");
 
     pinMode(BTN_SCROLL, INPUT_PULLUP);
     pinMode(BTN_SELECT, INPUT_PULLUP);
@@ -717,8 +784,8 @@ void setup()
 
     ui_splash();
 
-    Serial.printf("[OpenScope] Club: %s  Units: %s  Threshold: %.1f\n",
-                  CLUBS[g_club].name, speed_unit(), g_threshold);
+    Serial.printf("[OpenScope] Club: %s  Units: %s  Threshold: %.1f  RadarB angle: %.0f°\n",
+                  CLUBS[g_club].name, speed_unit(), g_threshold, RADAR_B_ANGLE_DEG);
     Serial.println("[OpenScope] Ready.");
 }
 
@@ -739,26 +806,45 @@ void loop()
     }
     if (power_held(2000)) {
         go_to_sleep();
-        return;   // never reached (deep sleep restarts from setup)
+        return;
     }
 
     // ── Radar detection ──────────────────────────────────────────────────────
     sample_radar();
-    double ball_hz = 0.0, club_hz = 0.0; int confidence = 0;
-    if (!detect_speeds(ball_hz, club_hz, confidence)) return;
+    double ball_hz = 0.0, club_hz = 0.0; float launch_deg = -1.0f;
+    if (!detect_speeds(ball_hz, club_hz, launch_deg)) return;
 
-    float ball_kmh = (float)(ball_hz * HZ_TO_KMH);
+    // Ball speed: Radar A measures the horizontal component v·cos(α).
+    // When launch angle is known, correct to true ball speed v = hz_A/cos(α).
+    float ball_kmh;
+    float carry_m;
+    if (launch_deg > 0.0f) {
+        float alpha_rad   = launch_deg * DEG_TO_RAD;
+        // True ball speed (corrected for launch angle)
+        ball_kmh = (float)(ball_hz * HZ_TO_KMH) / cosf(alpha_rad);
+        // Carry: scale empirical factor by measured vs. typical sin(2α) ratio.
+        // This keeps the calibrated absolute distances while adjusting for
+        // the actual trajectory shape.
+        float typ_rad  = CLUBS[g_club].typ_launch * DEG_TO_RAD;
+        float ang_corr = sinf(2.0f * alpha_rad) / sinf(2.0f * typ_rad);
+        carry_m = ball_kmh * CLUBS[g_club].carry_f * ang_corr;
+    } else {
+        // Launch angle not available — fall back to empirical carry factor
+        ball_kmh = (float)(ball_hz * HZ_TO_KMH);
+        carry_m  = ball_kmh * CLUBS[g_club].carry_f;
+    }
+
     float club_kmh = (club_hz > 0.0) ? (float)(club_hz * HZ_TO_KMH) : 0.0f;
     float smash    = (club_kmh > 0.0f) ? (ball_kmh / club_kmh) : 0.0f;
-    float carry_m  = ball_kmh * CLUBS[g_club].carry_f;
-    float total_m  = carry_m  * (1.0f + CLUBS[g_club].roll_f);
-    bool  dual_ok  = (confidence == 2);
+    float total_m  = carry_m * (1.0f + CLUBS[g_club].roll_f);
 
-    Serial.printf("[HIT] Ball %.1f km/h | Club %.1f km/h | Smash %.2f | Carry %.0f m | Total %.0f m | %s\n",
-                  ball_kmh, club_kmh, smash, carry_m, total_m, dual_ok ? "DUAL" : "SINGLE");
+    Serial.printf("[HIT] Ball %.1f km/h | Club %.1f km/h | Smash %.2f | Launch %.1f° | Carry %.0f m | Total %.0f m\n",
+                  ball_kmh, club_kmh, smash,
+                  (launch_deg > 0.0f) ? launch_deg : 0.0f,
+                  carry_m, total_m);
 
     record_carry(g_club, carry_m);
-    ui_result(ball_kmh, club_kmh, smash, carry_m, total_m, dual_ok);
+    ui_result(ball_kmh, club_kmh, carry_m, total_m, launch_deg);
 
     // ── Hold result, remain responsive ───────────────────────────────────────
     uint32_t t0 = millis();
@@ -768,7 +854,7 @@ void loop()
             nvs_save_settings();
             break;
         }
-        if (select_pressed()) break;   // dismiss result early
+        if (select_pressed()) break;
         if (power_held(2000)) go_to_sleep();
         delay(20);
     }
