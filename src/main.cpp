@@ -439,9 +439,11 @@ static void ui_cal_update(double peak_hz, double peak_mag,
                           (mag >= g_threshold) ? TFT_RED : (uint16_t)0x0460);
     }
 
+    // Clamp to top of spectrum so the line is always visible, even before
+    // the first swing (when max_seen ≈ 0 and scale ≈ 1).
     int ty = CAL_SPEC_Y + CAL_SPEC_H - 1 - (int)(g_threshold * scale);
-    if (ty >= CAL_SPEC_Y)
-        tft.drawFastHLine(CAL_SPEC_X, ty, CAL_SPEC_W, TFT_YELLOW);
+    if (ty < CAL_SPEC_Y) ty = CAL_SPEC_Y;
+    tft.drawFastHLine(CAL_SPEC_X, ty, CAL_SPEC_W, TFT_YELLOW);
 
     if (peak_hz > 0.0) {
         int px = CAL_SPEC_X + (int)(((float)peak_hz - MIN_DETECT_HZ) /
@@ -503,16 +505,15 @@ static void ui_cal_update(double peak_hz, double peak_mag,
 
 static void sample_radar()
 {
+    // Both channels sampled inside the same period so A[i] and B[i]
+    // represent the same moment in time. The two analogRead calls are
+    // ~2–5 µs apart — negligible compared to the 25 µs sample period.
     const uint32_t period_us = 1000000UL / SAMPLE_RATE;
     for (int i = 0; i < FFT_SIZE; i++) {
         uint32_t t0 = micros();
-        vReal[i] = (double)(analogRead(RADAR_ADC_PIN) - 2048);
-        vImag[i] = 0.0;
-        while ((micros() - t0) < period_us) {}
-    }
-    for (int i = 0; i < FFT_SIZE; i++) {
-        uint32_t t0 = micros();
+        vReal[i]  = (double)(analogRead(RADAR_ADC_PIN)   - 2048);
         vRealB[i] = (double)(analogRead(RADAR_ADC_PIN_B) - 2048);
+        vImag[i]  = 0.0;
         vImagB[i] = 0.0;
         while ((micros() - t0) < period_us) {}
     }
@@ -585,9 +586,12 @@ static bool detect_speeds(double& ball_hz, double& club_hz, int& confidence)
     if (hit_a && hit_b) {
         float diff_pct = fabsf((float)(ball_a - ball_b)) / (float)ball_a;
         if (diff_pct > DUAL_AGREE_PCT) {
-            Serial.printf("[DUAL] Mismatch A=%.0f B=%.0f (%.1f%%) — rejected\n",
+            // Radars disagree — B may have picked up a spurious reflection.
+            // Fall back to radar A only rather than discarding the valid hit.
+            Serial.printf("[DUAL] Mismatch A=%.0f B=%.0f (%.1f%%) — using A only\n",
                           ball_a, ball_b, diff_pct * 100.0f);
-            return false;
+            ball_hz = ball_a; club_hz = club_a; confidence = 1;
+            return true;
         }
         ball_hz    = (ball_a + ball_b) * 0.5;
         if      (club_a > 0.0 && club_b > 0.0) club_hz = (club_a + club_b) * 0.5;
