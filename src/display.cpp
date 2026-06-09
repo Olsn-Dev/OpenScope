@@ -40,7 +40,8 @@ static void draw_grid_lines()
 {
     tft.drawFastVLine(COL_W,     0, SCR_H, COL_DIV);
     tft.drawFastVLine(COL_W * 2, 0, SCR_H, COL_DIV);
-    tft.drawFastHLine(0, ROW_H,  SCR_W,    COL_DIV);
+    tft.drawFastHLine(0, ROW_H,     SCR_W, COL_DIV);
+    tft.drawFastHLine(0, ROW_H * 2, SCR_W, COL_DIV);  // mini row divider
 }
 
 static void draw_tile(int col, int row,
@@ -60,6 +61,20 @@ static void draw_tile(int col, int row,
     tft.drawString(number, cx, y0 + 62);
     tft.setTextFont(2); tft.setTextColor(uc, TFT_BLACK);
     tft.drawString(unit, cx, y0 + 118);
+}
+
+static void draw_mini_tile(int col, const char* label, const char* value,
+                           uint16_t val_color, bool dimmed = false)
+{
+    const int cx = col * COL_W + COL_W / 2;
+    const int y0 = ROW_H * 2;
+    uint16_t lc = dimmed ? COL_DIM : COL_UNIT;
+    uint16_t vc = dimmed ? COL_DIM : val_color;
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextFont(1); tft.setTextColor(lc, TFT_BLACK);
+    tft.drawString(label, cx, y0 + 8);
+    tft.setTextFont(4); tft.setTextColor(vc, TFT_BLACK);
+    tft.drawString(value, cx, y0 + 20);
 }
 
 static void draw_club_tile(int col, int row, int club_idx)
@@ -144,25 +159,21 @@ void ui_result(float ball_kmh, float club_kmh,
 
     draw_club_tile(2, 1, club_idx);
 
-    // ── Bottom bar: side angle (left) + smash factor (right) ─────────────────
-    tft.setTextFont(1);
-    tft.setTextColor(COL_UNIT, TFT_BLACK);
-
-    // Side angle — always shown; "STRAIGHT" when < 0.5°
+    // ── Mini row: side angle (col 0) + smash (col 1), col 2 empty ───────────
     char side_buf[16];
     if (fabsf(side_deg) >= 0.5f)
         snprintf(side_buf, sizeof(side_buf), "%s %.1f\xb0",
                  side_deg >= 0.0f ? "R" : "L", fabsf(side_deg));
     else
         snprintf(side_buf, sizeof(side_buf), "STRAIGHT");
-    tft.setTextDatum(BL_DATUM);
-    tft.drawString(side_buf, 4, SCR_H - 2);
+    draw_mini_tile(0, "SIDE", side_buf, TFT_WHITE);
 
     if (club_kmh > 0.0f) {
-        char sm[16];
-        snprintf(sm, sizeof(sm), "smash %.2f", ball_kmh / club_kmh);
-        tft.setTextDatum(BR_DATUM);
-        tft.drawString(sm, SCR_W - 4, SCR_H - 2);
+        char sm[8];
+        snprintf(sm, sizeof(sm), "%.2f", ball_kmh / club_kmh);
+        draw_mini_tile(1, "SMASH", sm, COL_UNIT);
+    } else {
+        draw_mini_tile(1, "SMASH", "--", COL_UNIT, true);
     }
 }
 
