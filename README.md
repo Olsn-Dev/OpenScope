@@ -3,17 +3,18 @@
 # OpenScope — DIY Golf Launch Monitor
 
 A radar-based golf launch monitor. Measures ball speed, club speed,
-**launch angle**, carry distance and total distance using two 24 GHz
-Doppler radar modules and an ESP32 microcontroller. Battery-powered,
-no phone required.
+**launch angle**, **side angle**, carry distance and total distance
+using three 24 GHz Doppler radar modules and an ESP32 microcontroller.
+Battery-powered, no phone required.
 
 ## Features
 
 - Ball speed (km/h or mph)
 - Club head speed
-- **Launch angle** — measured from dual-radar Doppler ratio
+- **Launch angle** — measured from ground/top radar Doppler ratio
+- **Side angle** — L/R deviation in degrees (e.g. `R 2.3°` or `STRAIGHT`)
 - Carry & total distance — physics-corrected using actual launch angle
-- Smash factor (serial output)
+- Smash factor
 - 3.5" color TFT display
 - Per-club statistics (avg, best carry) stored in flash
 - Deep sleep with one-button wake
@@ -21,20 +22,24 @@ no phone required.
 
 ## Technology
 
-Two **CDM324 24 GHz K-band Doppler radars** — one horizontal, one
-angled 20° upward — feed into a dual-channel LM358 preamplifier. The
-ESP32 runs a 1024-point FFT on both channels simultaneously and derives
-launch angle from the frequency ratio between them.
+Three **CDM324 24 GHz K-band Doppler radars** feed into an LM358
+preamplifier. The ESP32 runs a 1024-point FFT on all three channels
+simultaneously and solves for side angle, launch angle and true ball
+speed using the 3D Doppler equations:
 
 ```
-f_A = 2·v·cos(α)·fc/c         (Radar A, horizontal)
-f_B = 2·v·cos(α−θ)·fc/c       (Radar B, tilted θ = 20° up)
+Radar L & R (ground, 90° V-formation, 45° per arm):
+  f_L = k·cos(α)·cos(β − 45°)
+  f_R = k·cos(α)·cos(β + 45°)
 
-f_A / f_B = cos(α) / cos(α−θ) → solve for α via binary search
+  Side angle β:  f_L/f_R = cos(β−45°)/cos(β+45°)  → binary search
+
+Radar T (top, tilted 20° upward):
+  F = (f_L + f_R) / (2·cos(β)·cos(45°))    [horizontal speed proxy]
+  tan(α) = (f_T/F − cos(β)·cos(20°)) / sin(20°)   → launch angle α
+
+True ball speed:  k = F / cos(α),   v = k · 0.022384 km/h
 ```
-
-Carry is then calculated using the measured launch angle as a trajectory
-correction on top of empirical per-club factors.
 
 ## Project Phases
 
@@ -72,26 +77,45 @@ golf-launch-monitor/
 
 ## Radar Mounting
 
-This is the most important step for accurate launch angle measurement.
+Three radars in total. This is the most important step for accurate measurements.
+
+### Ground radars — V-formation (Radar L & R)
+
+```
+Top view (looking down):
+
+            ↑  target / ball flight
+
+            /\   ← 90° at the vertex
+           /  \
+          / 45°\ 45°
+        [L]    [R]
+       GPIO34  GPIO35
+
+Both radars at ground level, ~10 cm behind tee.
+V-tip points toward target. Each arm is 45° from the shot direction.
+```
+
+- Mount both flat on the ground, angled inward at **45° from the shot line**.
+- Aim the boresight of each radar toward the ball impact point.
+- Keep the two radars ≤ 10 cm apart at the vertex.
+
+### Top radar — launch angle (Radar T)
 
 ```
 Side view:
 
-                         ↗  Ball trajectory
+                         ↗  Ball trajectory (~8–40° typical)
                         /
-          Radar B ────►/   20° above horizontal  (GPIO35)
+          Radar T ────►/   20° above horizontal  (GPIO32)
                        /
 ─────────────────────────────────────────────────  Ground
-          Radar A ─────────────────────────────►  horizontal  (GPIO34)
               │
            ~10 cm behind tee, aimed at impact point
 ```
 
-- **Radar A** — mount perfectly horizontal (use a spirit level).
-- **Radar B** — mount tilted **20° upward**. Use a printed wedge or
-  protractor. Both radars side by side, ≤ 5 cm apart.
-- If you use a different angle, update `#define RADAR_B_ANGLE_DEG` in
-  `src/main.cpp` to match.
+- Mount tilted **20° upward**. Use a printed wedge or protractor.
+- If you use a different angle, update `RADAR_T_ANGLE_DEG` in `src/config.h`.
 
 ## Controls
 
@@ -119,11 +143,11 @@ The firmware has four screens:
 │  187     │  209     │          │
 │  m       │  m       │          │
 └──────────┴──────────┴──────────┘
+ R 2.3°                 smash 1.55
 ```
 
-The Launch tile turns **green** when both radars detect the shot and a
-valid angle is computed. It shows `--` (dimmed) when only one radar
-fired — carry then falls back to an empirical estimate.
+- **Launch** tile turns green when a valid angle is computed; `--` (dimmed) if unavailable.
+- **Side angle** shown bottom-left: `R 2.3°`, `L 1.1°`, or `STRAIGHT` (< 0.5°).
 
 ### Settings screen
 
@@ -204,11 +228,12 @@ The ESP32 samples both radar channels simultaneously at 40 kHz and runs
 a 1024-point FFT (~25 ms window). Two peaks per frame are searched —
 the lower frequency is club head speed, the higher is ball speed.
 
-**Launch angle** is computed from the ratio of the two radar frequencies
-and refined with a 40-iteration binary search. Ball speed is then
-corrected for the measured angle (`v_true = v_horizontal / cos(α)`),
-and carry is scaled using the trajectory shape (`sin(2α)`) relative to
-each club's typical launch angle.
+**Side angle** is computed from the L/R frequency ratio (independent of
+speed and launch angle) via a 40-iteration binary search. **Launch angle**
+is then solved directly using the three-radar 3D formula — no binary
+search needed. Ball speed `k` is fully corrected for both angles, and
+carry is scaled using the trajectory shape (`sin(2α)`) relative to each
+club's typical launch angle.
 
 ## UI Mockup
 

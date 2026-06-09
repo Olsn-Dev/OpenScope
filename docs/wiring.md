@@ -5,60 +5,93 @@
 ## System Overview
 
 ```
-CDM324 A (horizontal)    ──► LM358 op-amp 1 ──► GPIO34 (ADC)
-CDM324 B (angled 20° up) ──► LM358 op-amp 2 ──► GPIO35 (ADC)
-                                                     │
-18650 battery ──► ESP32 board                        ├──► GPIO23/18/5/2/4 (SPI)
-                  (onboard regulator)                │
-                                                     └──► ST7796 TFT display
+CDM324 L (ground, left V arm)  ──► LM358 op-amp 1 ──► GPIO34 (ADC1_CH6)
+CDM324 R (ground, right V arm) ──► LM358 op-amp 2 ──► GPIO35 (ADC1_CH7)
+CDM324 T (top, 20° up)         ──► LM358 op-amp 3 ──► GPIO32 (ADC1_CH4)
+                                                           │
+18650 battery ──► ESP32 board                              ├──► GPIO23/18/5/2/4 (SPI)
+                  (onboard regulator)                      │
+                                                           └──► ST7796 TFT display
 
 BTN_SCROLL ──► GPIO25 ──► GND
 BTN_SELECT ──► GPIO26 ──► GND
 BTN_POWER  ──► GPIO27 ──► GND
 ```
 
+> Three radar channels require a **triple-channel preamp**. The LM358 only has
+> two op-amps — use **two LM358 ICs** (or one LM324 quad op-amp) to get three
+> independent channels.
+
 ---
 
 ## Radar Placement & Mounting Angles
 
-Both CDM324 modules must be mounted in fixed positions relative to the
-ball impact point. Use a printed wedge, a protractor, or a 3D-printed
-bracket to hold Radar B at the correct elevation angle.
+All three CDM324 modules must be mounted in fixed positions relative to
+the ball impact point.
+
+### Ground radars — V-formation (Radar L & R)
+
+```
+Top view (looking down from above):
+
+              ↑  target / ball flight direction
+
+              /\   ← 90° vertex angle
+             /  \
+            / 45°\ 45°
+     [L]──►/      \◄──[R]
+  GPIO34  /        \  GPIO35
+
+  Both radars on the ground, ~10 cm behind the tee.
+  V-tip (vertex) points toward the target.
+```
+
+**Key rules:**
+- Each radar arm is **45° from the shot direction** (90° total V-angle).
+- Mount both flat on the ground — use a spirit level.
+- Aim each radar's boresight toward the ball impact point.
+- Keep the vertex of the V within ~10 cm of the tee.
+- Keep both radars **static** — vibration adds noise.
+
+**Why 45°?** This angle maximises `sin(V)·cos(V)`, giving the optimal
+trade-off between CDM324 signal strength and side-angle sensitivity.
+Estimated accuracy: < 0.1° at 150 km/h.
+
+**Changing the arm angle:**
+```cpp
+// src/config.h
+#define RADAR_V_HALF_DEG  45.0f   // degrees per arm from shot direction
+```
+
+---
+
+### Top radar — launch angle (Radar T)
 
 ```
 Side view:
 
-                             ↗  Ball trajectory (~12–35° typical)
+                             ↗  Ball trajectory (~8–40° typical)
                             /
-              Radar B ────►/   20° above horizontal
-             (GPIO35)     /
+              Radar T ────►/   20° above horizontal
+             (GPIO32)     /
                          /
 ──────────────────────────────────────────────────  Ground
-              Radar A ──────────────────────────►   0° (horizontal)
-             (GPIO34)
                  │
               ~10 cm behind tee, centred on ball path
 ```
 
 **Key rules:**
-- Radar A must be **exactly horizontal** — use a spirit level.
-- Radar B must be tilted **upward** by `RADAR_B_ANGLE_DEG` (default 20°).
-  If you change this angle, update the `#define` in `src/main.cpp`.
-- Both radars should point directly at the expected ball impact position.
-- Mount them **side by side**, no more than 5 cm apart horizontally.
-- Keep both radars **static** during use — any vibration adds noise.
+- Mount tilted **20° upward** — use a printed wedge or protractor.
+- Point the boresight toward the expected ball impact position.
+- Keep static during use.
 
-**Why 20°?**
-Golf launch angles range from ~8° (driver) to ~40° (lob wedge). A 20°
-Radar B angle gives the best sensitivity across the full club range:
-at 20° launch the radars read equal frequency, and the ratio deviates
-measurably in both directions for higher and lower angles.
+**Why 20°?** Golf launch angles range from ~8° (driver) to ~40° (lob
+wedge). A 20° top-radar angle gives good sensitivity across the full range.
 
 **Changing the mount angle:**
-If you build a bracket at a different angle, change this line in
-`src/main.cpp` to match:
 ```cpp
-#define RADAR_B_ANGLE_DEG  20.0f   // degrees above horizontal
+// src/config.h
+#define RADAR_T_ANGLE_DEG  20.0f   // degrees above horizontal
 ```
 
 ---
@@ -85,17 +118,26 @@ Both channels share VCC/GND and use identical component values.
 - **Bandpass:** ~300 Hz – 16 kHz (covers 7–360 km/h Doppler range)
 - **Output:** 0–3.3 V centred at 1.65 V (VCC/2)
 
+Three channels are needed — use **two LM358 ICs** (or one **LM324** quad op-amp).
+
+**LM358 #1 — Radar L & R:**
 ```
 LM358 DIP-8 pin-out (top view):
                 ┌───────┐
   OUT A  (1) ───┤1     8├─── VCC (3.3 V)
-   IN− A (2) ───┤2     7├─── OUT B  → GPIO35
+   IN− A (2) ───┤2     7├─── OUT B  → GPIO35 (Radar R)
    IN+ A (3) ───┤3     6├─── IN− B
     GND  (4) ───┤4     5├─── IN+ B
                 └───────┘
 
-Channel A → GPIO34   (Radar A, horizontal)
-Channel B → GPIO35   (Radar B, angled upward)
+Channel A → GPIO34   (Radar L, left V arm)
+Channel B → GPIO35   (Radar R, right V arm)
+```
+
+**LM358 #2 (or LM324 channel C) — Radar T:**
+```
+Channel A → GPIO32   (Radar T, top, angled upward)
+(Channel B unused if using second LM358)
 ```
 
 **Single-channel schematic (build twice — once per op-amp):**
@@ -184,6 +226,6 @@ the ESP32 uses internal pull-ups.
 
 | Rail | Source | Used by |
 |------|--------|---------|
-| 3.3V | ESP32 onboard LDO | TFT VCC/BL, LM358 VCC |
-| 5V | ESP32 boost converter | CDM324 A + B VCC |
+| 3.3V | ESP32 onboard LDO | TFT VCC/BL, LM358 #1 & #2 VCC |
+| 5V | ESP32 boost converter | CDM324 L + R + T VCC |
 | GND | Common | All components |
