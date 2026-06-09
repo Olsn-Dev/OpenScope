@@ -10,8 +10,8 @@ All components from AliExpress unless noted. Prices approximate (SEK).
 |---|-----------|----------------------|-----|--------------|
 | 1 | ESP32 dev board with 18650 battery holder | `ESP32 18650 battery holder board` | 1 | 160 |
 | 2 | 18650 Li-Ion battery, 3000 mAh, protected | `18650 3000mAh protected battery` | 1 | 60 |
-| 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 2 | 40 |
-| 4 | LM358 op-amp IC or module | `LM358 op amp DIP8` or `LM358 module` | 1 | 10 |
+| 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 3 | 60 |
+| 4 | LM358 op-amp IC | `LM358 op amp DIP8` | 3 | 20 |
 | 5 | 3.5" TFT display, SPI, ST7796, 480×320 | `3.5 inch TFT LCD SPI ST7796 480x320` | 1 | 120 |
 | 6 | Tactile push button, 6×6 mm, PCB mount | `6x6mm tactile push button switch` | 4 | 8 |
 
@@ -29,18 +29,19 @@ Links to recomended parts:
 
 ## LM358 Preamplifier Passives
 
-The LM358 DIP-8 contains **two op-amps** — one preamp per radar, both in the
-same IC. Each channel amplifies the CDM324 IF signal ×100 and bandpass-filters
-it to 300 Hz – 16 kHz (covers ~7–360 km/h).
+Three radar channels require three preamp channels. Use **three LM358 ICs**
+(one per radar) — each DIP-8 IC handles one channel (the second op-amp in
+each IC is unused). Each channel amplifies the CDM324 IF signal ×100 and
+bandpass-filters it to 300 Hz – 16 kHz (covers ~7–360 km/h).
 
 | Component | Value | Qty | Purpose |
 |-----------|-------|-----|---------|
-| Resistor | 1 kΩ | 2 | Gain lower resistor R1 (one per channel) |
-| Resistor | 100 kΩ | 8 | R2 (feedback) + R3, R4 (bias divider) × 2 channels |
-| Capacitor | 1 µF, film or electrolytic | 2 | AC coupling (high-pass ~160 Hz) |
-| Capacitor | 100 pF, ceramic | 2 | Feedback cap (low-pass ~16 kHz) |
-| Capacitor | 10 µF, electrolytic | 2 | Bias midpoint bypass (one per channel) |
-| Capacitor | 100 nF, ceramic | 2 | VCC decoupling |
+| Resistor | 1 kΩ | 3 | Gain lower resistor R1 (one per channel) |
+| Resistor | 100 kΩ | 12 | R2 (feedback) + R3, R4 (bias divider) × 3 channels |
+| Capacitor | 1 µF, film or electrolytic | 3 | AC coupling (high-pass ~160 Hz) |
+| Capacitor | 100 pF, ceramic | 3 | Feedback cap (low-pass ~16 kHz) |
+| Capacitor | 10 µF, electrolytic | 3 | Bias midpoint bypass (one per channel) |
+| Capacitor | 100 nF, ceramic | 3 | VCC decoupling (one per LM358) |
 
 > All resistors 0.25 W, 5% tolerance or better. A mixed resistor/capacitor
 > assortment kit from AliExpress (≈25 SEK) covers all values above.
@@ -62,10 +63,10 @@ it to 300 Hz – 16 kHz (covers ~7–360 km/h).
 
 | Category | ~Price (SEK) |
 |----------|-------------|
-| Main components | ~400 |
-| Preamp passives | 25 |
+| Main components | ~425 |
+| Preamp passives | 35 |
 | Wiring & assembly | 60 |
-| **Total** | **~500 SEK** |
+| **Total** | **~520 SEK** |
 
 ---
 
@@ -84,13 +85,15 @@ Connect each button between the GPIO pin and GND. No external resistors needed �
 the ESP32 uses internal pull-ups. For an enclosed device, mount all three buttons
 in drilled holes on the side of the housing. Order 4 buttons (3 used + 1 spare).
 
-### CDM324 radar (×2)
-Two CDM324 modules are used for launch angle measurement:
-- **Radar A (GPIO34):** mounted horizontally — measures ball speed.
-- **Radar B (GPIO35):** mounted at 20° above horizontal — together with A,
-  allows the firmware to compute launch angle via the Doppler frequency ratio.
+### CDM324 radar (×3)
+Three CDM324 modules are used — two for side angle, one for launch angle:
 
-See `docs/wiring.md` for the full mounting diagram and angle instructions.
+- **Radar L (GPIO34):** ground level, left arm of V-formation (45° left of shot line).
+- **Radar R (GPIO35):** ground level, right arm of V-formation (45° right of shot line).
+- **Radar T (GPIO32):** top-mounted, tilted 20° upward — measures launch angle.
+
+The two ground radars form a **90° V** with the tip pointing toward the target.
+See `docs/wiring.md` for full mounting diagrams.
 
 - The **standard CDM324** (not the -UK or -F variant) is approved for 24 GHz
   ISM use in Sweden and the EU. No licence required.

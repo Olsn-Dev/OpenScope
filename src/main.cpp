@@ -111,7 +111,7 @@ static void calibration_loop()
         double peak_mag = 0.0;
         int    peak_bin = -1;
         for (int i = bin_lo; i <= bin_hi; i++) {
-            if (vReal[i] > peak_mag) { peak_mag = vReal[i]; peak_bin = i; }
+            if (vRealL[i] > peak_mag) { peak_mag = vRealL[i]; peak_bin = i; }
         }
         double peak_hz = (peak_bin >= 0)
                          ? ((double)peak_bin * SAMPLE_RATE / FFT_SIZE)
@@ -123,8 +123,8 @@ static void calibration_loop()
 
         if ((float)peak_mag > max_seen) max_seen = (float)peak_mag;
 
-        // Pass vReal spectrum buffer to display module — no coupling via globals
-        ui_cal_update(vReal, peak_hz, peak_mag,
+        // Pass vRealL spectrum buffer (Radar L) to display module
+        ui_cal_update(vRealL, peak_hz, peak_mag,
                       noise_ema, max_seen, g_threshold, g_use_mph);
     }
 }
@@ -178,16 +178,17 @@ void setup()
     // ADC: 12-bit, 11 dB attenuation → ~0–3.1 V input range
     // On newer ESP-IDF: replace ADC_11db with ADC_ATTEN_DB_12 if it fails.
     analogReadResolution(12);
-    analogSetPinAttenuation(RADAR_ADC_PIN,   ADC_11db);
-    analogSetPinAttenuation(RADAR_ADC_PIN_B, ADC_11db);
+    analogSetPinAttenuation(RADAR_ADC_PIN_L, ADC_11db);
+    analogSetPinAttenuation(RADAR_ADC_PIN_R, ADC_11db);
+    analogSetPinAttenuation(RADAR_ADC_PIN_T, ADC_11db);
 
     nvs_load(g_threshold, g_use_mph, g_club, g_stats, NUM_CLUBS);
     display_init();
     ui_splash(g_club, g_stats, g_use_mph);
 
-    Serial.printf("[OpenScope] Club: %s  Units: %s  Threshold: %.1f  RadarB: %.0f°\n",
+    Serial.printf("[OpenScope] Club: %s  Units: %s  Threshold: %.1f  V-half: %.0f°  Top: %.0f°\n",
                   CLUBS[g_club].name, speed_unit(g_use_mph),
-                  g_threshold, RADAR_B_ANGLE_DEG);
+                  g_threshold, RADAR_V_HALF_DEG, RADAR_T_ANGLE_DEG);
     Serial.println("[OpenScope] Ready.");
 }
 
@@ -214,38 +215,38 @@ void loop()
     // ── Radar detection ──────────────────────────────────────────────────────
     sample_radar();
     double ball_hz = 0.0, club_hz = 0.0;
-    float  launch_deg = -1.0f;
-    if (!detect_speeds(ball_hz, club_hz, launch_deg, g_threshold)) return;
+    float  launch_deg = -1.0f, side_deg = 0.0f;
+    if (!detect_speeds(ball_hz, club_hz, launch_deg, side_deg, g_threshold)) return;
 
     // ── Physics ───────────────────────────────────────────────────────────────
-    // Radar A measures the horizontal component: hz_A = v·cos(α)
-    // When launch angle is known, recover true ball speed: v = hz_A / cos(α)
-    float ball_kmh, carry_m;
+    // detect_speeds() returns ball_hz = k (true speed proxy, already corrected
+    // for both launch angle α and side angle β by the 3-radar solver).
+    // ball_kmh = k · HZ_TO_KMH is the true ball speed off the face.
+    float ball_kmh = (float)(ball_hz * HZ_TO_KMH);
+    float carry_m;
     if (launch_deg > 0.0f) {
         const float alpha_rad = launch_deg * DEG_TO_RAD;
-        ball_kmh = (float)(ball_hz * HZ_TO_KMH) / cosf(alpha_rad);
-        // Scale empirical carry factor by the trajectory shape sin(2α)
-        // relative to the typical launch angle for this club
-        const float typ_rad  = CLUBS[g_club].typ_launch * DEG_TO_RAD;
-        const float ang_corr = sinf(2.0f * alpha_rad) / sinf(2.0f * typ_rad);
+        const float typ_rad   = CLUBS[g_club].typ_launch * DEG_TO_RAD;
+        const float ang_corr  = sinf(2.0f * alpha_rad) / sinf(2.0f * typ_rad);
         carry_m = ball_kmh * CLUBS[g_club].carry_f * ang_corr;
     } else {
-        ball_kmh = (float)(ball_hz * HZ_TO_KMH);
-        carry_m  = ball_kmh * CLUBS[g_club].carry_f;
+        carry_m = ball_kmh * CLUBS[g_club].carry_f;
     }
 
     const float club_kmh = (club_hz > 0.0) ? (float)(club_hz * HZ_TO_KMH) : 0.0f;
     const float smash    = (club_kmh > 0.0f) ? (ball_kmh / club_kmh) : 0.0f;
     const float total_m  = carry_m * (1.0f + CLUBS[g_club].roll_f);
 
+    const char* side_dir = (side_deg >= 0.0f) ? "R" : "L";
     Serial.printf("[HIT] Ball %.1f km/h | Club %.1f km/h | Smash %.2f"
-                  " | Launch %.1f° | Carry %.0f m | Total %.0f m\n",
+                  " | Launch %.1f° | Side %s%.1f° | Carry %.0f m | Total %.0f m\n",
                   ball_kmh, club_kmh, smash,
                   (launch_deg > 0.0f) ? launch_deg : 0.0f,
+                  side_dir, fabsf(side_deg),
                   carry_m, total_m);
 
     record_carry(g_club, carry_m, g_stats);
-    ui_result(ball_kmh, club_kmh, carry_m, total_m, launch_deg,
+    ui_result(ball_kmh, club_kmh, carry_m, total_m, launch_deg, side_deg,
               g_club, g_use_mph);
 
     // ── Hold result, remain responsive ───────────────────────────────────────

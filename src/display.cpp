@@ -111,7 +111,8 @@ void ui_splash(int club_idx, const ClubStats* stats, bool use_mph)
 
 void ui_result(float ball_kmh, float club_kmh,
                float carry_m,  float total_m,
-               float launch_deg, int club_idx, bool use_mph)
+               float launch_deg, float side_deg,
+               int club_idx, bool use_mph)
 {
     tft.fillScreen(TFT_BLACK);
     draw_grid_lines();
@@ -143,12 +144,24 @@ void ui_result(float ball_kmh, float club_kmh,
 
     draw_club_tile(2, 1, club_idx);
 
+    // ── Bottom bar: side angle (left) + smash factor (right) ─────────────────
+    tft.setTextFont(1);
+    tft.setTextColor(COL_UNIT, TFT_BLACK);
+
+    // Side angle — always shown; "STRAIGHT" when < 0.5°
+    char side_buf[16];
+    if (fabsf(side_deg) >= 0.5f)
+        snprintf(side_buf, sizeof(side_buf), "%s %.1f\xb0",
+                 side_deg >= 0.0f ? "R" : "L", fabsf(side_deg));
+    else
+        snprintf(side_buf, sizeof(side_buf), "STRAIGHT");
+    tft.setTextDatum(BL_DATUM);
+    tft.drawString(side_buf, 4, SCR_H - 2);
+
     if (club_kmh > 0.0f) {
         char sm[16];
         snprintf(sm, sizeof(sm), "smash %.2f", ball_kmh / club_kmh);
         tft.setTextDatum(BR_DATUM);
-        tft.setTextFont(1);
-        tft.setTextColor(COL_UNIT, TFT_BLACK);
         tft.drawString(sm, SCR_W - 4, SCR_H - 2);
     }
 }

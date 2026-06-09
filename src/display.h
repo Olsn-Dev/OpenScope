@@ -22,9 +22,11 @@ void ui_splash(int club_idx, const ClubStats* stats, bool use_mph);
 
 // Result screen — all tiles filled with shot data.
 //   launch_deg < 0  →  launch tile shows "--" (dimmed)
+//   side_deg: positive = right, negative = left; shown as "R 2.3°" / "L 2.3°"
 void ui_result(float ball_kmh, float club_kmh,
                float carry_m,  float total_m,
-               float launch_deg, int club_idx, bool use_mph);
+               float launch_deg, float side_deg,
+               int club_idx, bool use_mph);
 
 // Settings menu. sel = highlighted row (0–2).
 // reset_done = true shows a brief "Done!" confirmation on the reset item.
