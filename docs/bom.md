@@ -11,7 +11,7 @@ All components from AliExpress unless noted. Prices approximate (SEK).
 | 1 | ESP32 dev board with 18650 battery holder | `ESP32 18650 battery holder board` | 1 | 160 |
 | 2 | 18650 Li-Ion battery, 3000 mAh, protected | `18650 3000mAh protected battery` | 1 | 60 |
 | 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 3 | 60 |
-| 4 | LM324 quad op-amp IC | `LM324 op amp DIP14` | 1 | 10 |
+| 4 | LM358 op-amp IC | `LM358 op amp DIP8` | 3 | 20 |
 | 5 | 3.5" TFT display, SPI, ST7796, 480×320 | `3.5 inch TFT LCD SPI ST7796 480x320` | 1 | 120 |
 | 6 | Tactile push button, 6×6 mm, PCB mount | `6x6mm tactile push button switch` | 4 | 8 |
 
@@ -29,9 +29,9 @@ Links to recomended parts:
 
 ## LM358 Preamplifier Passives
 
-Three radar channels require three preamp channels. One **LM324** quad
-op-amp IC provides four channels in a single DIP-14 package — use three,
-leave one spare. Each channel amplifies the CDM324 IF signal ×100 and
+Three radar channels require three preamp channels. Use **three LM358 ICs**
+(one per radar) — each DIP-8 IC handles one channel (the second op-amp in
+each IC is unused). Each channel amplifies the CDM324 IF signal ×100 and
 bandpass-filters it to 300 Hz – 16 kHz (covers ~7–360 km/h).
 
 | Component | Value | Qty | Purpose |
@@ -41,7 +41,7 @@ bandpass-filters it to 300 Hz – 16 kHz (covers ~7–360 km/h).
 | Capacitor | 1 µF, film or electrolytic | 3 | AC coupling (high-pass ~160 Hz) |
 | Capacitor | 100 pF, ceramic | 3 | Feedback cap (low-pass ~16 kHz) |
 | Capacitor | 10 µF, electrolytic | 3 | Bias midpoint bypass (one per channel) |
-| Capacitor | 100 nF, ceramic | 2 | VCC decoupling (across LM324 VCC–GND) |
+| Capacitor | 100 nF, ceramic | 3 | VCC decoupling (one per LM358) |
 
 > All resistors 0.25 W, 5% tolerance or better. A mixed resistor/capacitor
 > assortment kit from AliExpress (≈25 SEK) covers all values above.
