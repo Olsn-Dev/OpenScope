@@ -250,20 +250,61 @@ def screen_calibration():
 
     return img
 
+# ─── Screen 4 — Settings ─────────────────────────────────────────────────────
+
+def screen_settings(sel=0):
+    img  = Image.new("RGB", (SCR_W, SCR_H), BG)
+    draw = ImageDraw.Draw(img)
+
+    # Header bar (navy)
+    HDR_H = 48
+    draw.rectangle([0, 0, SCR_W, HDR_H], fill=NAVY)
+    tl(draw, "Settings", 16, 16, F_MED, CYAN)
+    tr(draw, "scroll=next  select=choose  power=exit", SCR_W - 12, 20, F_HDR, UNIT_C)
+
+    labels = ["Units",        "Reset Stats",  "Calibration"]
+    values = ["km/h",         "7I",            "►"]  # ▶ arrow for calibration
+
+    for i, (label, value) in enumerate(zip(labels, values)):
+        y = 68 + i * 74
+        active = (i == sel)
+        row_bg = (10, 26, 42) if active else BG
+        draw.rectangle([0, y - 2, SCR_W, y + 52], fill=row_bg)
+        if active:
+            draw.rectangle([0, y - 2, 4, y + 52], fill=CYAN)
+
+        lc = WHITE if active else UNIT_C
+        vc = CYAN  if active else DIM
+        tl(draw, label, 20,          y + 14, F_MED, lc)
+        tr(draw, value, SCR_W - 20,  y + 14, F_MED, vc)
+
+    # Divider + version footer
+    draw.line([(0, SCR_H - 22), (SCR_W, SCR_H - 22)], fill=DIV, width=1)
+    tc(draw, "OpenScope v0.6", SCR_W // 2, SCR_H - 18, F_SMALL, DIM)
+
+    return img
+
 # ─── Compose final image ──────────────────────────────────────────────────────
 
 GAP = 10
 
 def compose():
-    screens = [screen_ready(), screen_result(), screen_calibration()]
-    total_w = SCR_W * 3 + GAP * 4
-    total_h = SCR_H + GAP * 2
+    screens = [screen_ready(), screen_result(), screen_settings(sel=0), screen_calibration()]
+    labels  = ["READY", "RESULT", "SETTINGS", "CALIBRATION"]
+
+    # Two rows of 2 screens each
+    cols, rows = 2, 2
+    total_w = SCR_W * cols + GAP * (cols + 1)
+    total_h = SCR_H * rows + GAP * (rows + 1)
     canvas  = Image.new("RGB", (total_w, total_h), (6, 6, 12))
 
-    labels = ["READY", "RESULT", "CALIBRATION"]
+    F_CAP = load_font(13)
     for i, (scr, lbl) in enumerate(zip(screens, labels)):
-        x = GAP + i * (SCR_W + GAP)
-        canvas.paste(scr, (x, GAP))
+        col = i % cols
+        row = i // cols
+        x   = GAP + col * (SCR_W + GAP)
+        y   = GAP + row * (SCR_H + GAP)
+        canvas.paste(scr, (x, y))
 
     canvas.save(OUT, "PNG")
     print(f"Saved {OUT}  ({total_w}×{total_h})")
