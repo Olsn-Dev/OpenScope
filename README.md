@@ -237,7 +237,7 @@ club's typical launch angle.
 
 ## UI Mockup
 
-![OpenScope UI — all four screens](openscope-ui.png)
+![OpenScope UI — all four screens](docs/openscope-ui.png)
 
 ## License
 
