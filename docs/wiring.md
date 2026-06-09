@@ -18,9 +18,8 @@ BTN_SELECT ──► GPIO26 ──► GND
 BTN_POWER  ──► GPIO27 ──► GND
 ```
 
-> Three radar channels require a **triple-channel preamp**. The LM358 only has
-> two op-amps — use **two LM358 ICs** (or one LM324 quad op-amp) to get three
-> independent channels.
+> Three radar channels require three preamp channels. Use one **LM324** quad
+> op-amp (DIP-14, 4 channels) — use three channels, one spare.
 
 ---
 
@@ -109,35 +108,32 @@ op-amp channel inside the same LM358 DIP-8 IC.
 
 ---
 
-## LM358 Dual-Channel Preamplifier
+## LM324 Triple-Channel Preamplifier
 
-The LM358 DIP-8 contains **two independent op-amps** — one per radar.
-Both channels share VCC/GND and use identical component values.
+The LM324 DIP-14 contains **four independent op-amps** — use three (one per
+radar), leave the fourth unused. All channels share VCC/GND and use identical
+component values.
 
 - **Gain:** ×100 per channel
 - **Bandpass:** ~300 Hz – 16 kHz (covers 7–360 km/h Doppler range)
 - **Output:** 0–3.3 V centred at 1.65 V (VCC/2)
 
-Three channels are needed — use **two LM358 ICs** (or one **LM324** quad op-amp).
-
-**LM358 #1 — Radar L & R:**
 ```
-LM358 DIP-8 pin-out (top view):
-                ┌───────┐
-  OUT A  (1) ───┤1     8├─── VCC (3.3 V)
-   IN− A (2) ───┤2     7├─── OUT B  → GPIO35 (Radar R)
-   IN+ A (3) ───┤3     6├─── IN− B
-    GND  (4) ───┤4     5├─── IN+ B
-                └───────┘
+LM324 DIP-14 pin-out (top view):
+                 ┌────────┐
+   OUT A  (1) ───┤1     14├─── VCC (3.3 V)
+   IN− A  (2) ───┤2     13├─── OUT D  (unused)
+   IN+ A  (3) ───┤3     12├─── IN− D
+    GND   (4) ───┤4     11├─── IN+ D
+   IN+ B  (5) ───┤5     10├─── IN+ C
+   IN− B  (6) ───┤6      9├─── IN− C
+   OUT B  (7) ───┤7      8├─── OUT C
+                 └────────┘
 
 Channel A → GPIO34   (Radar L, left V arm)
 Channel B → GPIO35   (Radar R, right V arm)
-```
-
-**LM358 #2 (or LM324 channel C) — Radar T:**
-```
-Channel A → GPIO32   (Radar T, top, angled upward)
-(Channel B unused if using second LM358)
+Channel C → GPIO32   (Radar T, top, angled upward)
+Channel D — leave inputs unconnected, output floating
 ```
 
 **Single-channel schematic (build twice — once per op-amp):**
@@ -226,6 +222,6 @@ the ESP32 uses internal pull-ups.
 
 | Rail | Source | Used by |
 |------|--------|---------|
-| 3.3V | ESP32 onboard LDO | TFT VCC/BL, LM358 #1 & #2 VCC |
+| 3.3V | ESP32 onboard LDO | TFT VCC/BL, LM324 VCC |
 | 5V | ESP32 boost converter | CDM324 L + R + T VCC |
 | GND | Common | All components |
