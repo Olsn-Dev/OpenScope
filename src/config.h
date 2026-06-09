@@ -24,19 +24,18 @@
 
 // ─── Radar geometry ───────────────────────────────────────────────────────────
 // RADAR_V_HALF_DEG: angle between each V arm and the shot direction (top view).
-//   45° is the mathematically optimal angle: maximises sin(V)·cos(V) = sin(2V)/2,
-//   which gives the best trade-off between signal strength (cos V) and angular
-//   sensitivity (sin V). Estimated side-angle accuracy < 0.1° at 150 km/h.
-//   Total V-angle at the vertex = 2 × 45° = 90°.
-//   Valid side-angle range: |β| < (90° − 45°) = ±44°, far more than needed.
-#define RADAR_V_HALF_DEG   45.0f   // degrees — optimal for accuracy (90° total V)
+//   75° per arm gives a 150° total V-angle at the vertex (obtuse/blunt V).
+//   Valid side-angle range: |β| < (90° − 75°) = ±14°, sufficient for all
+//   realistic golf shots. Signal strength: cos(75°) ≈ 26% of max — weaker
+//   than 45° but higher angular sensitivity for small deviations.
+#define RADAR_V_HALF_DEG   75.0f   // degrees — 150° total V at vertex
 #define RADAR_T_ANGLE_DEG  20.0f   // top radar: degrees above horizontal
 #define DEG_TO_RAD         0.017453293f
 
 // ─── Launch and side angle limits ─────────────────────────────────────────────
 #define LAUNCH_MIN_DEG     2.0f    // below this → no launch detection
 #define LAUNCH_MAX_DEG     55.0f   // above this → no launch detection
-#define SIDE_MAX_DEG       10.0f   // |side angle| limit — ±10° covers all realistic shots
+#define SIDE_MAX_DEG       13.0f   // |side angle| limit — must be < (90 − RADAR_V_HALF_DEG) = 15°
 
 // ─── Detection ────────────────────────────────────────────────────────────────
 
