@@ -1,4 +1,4 @@
-![OpenScope UI](docs/openscope-ui.png)
+![OpenScope](docs/hero.png)
 
 # OpenScope — DIY Golf Launch Monitor
 
@@ -234,6 +234,10 @@ is then solved directly using the three-radar 3D formula — no binary
 search needed. Ball speed `k` is fully corrected for both angles, and
 carry is scaled using the trajectory shape (`sin(2α)`) relative to each
 club's typical launch angle.
+
+## UI Mockup
+
+![OpenScope UI — all four screens](docs/openscope-ui.png)
 
 ## License
 

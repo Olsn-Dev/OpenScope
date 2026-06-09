@@ -30,11 +30,12 @@ def parse_defines(path):
             d[m.group(1)] = int(v, 16) if v.startswith("0x") else int(v)
     return d
 
-cfg   = parse_defines(ROOT / "src" / "config.h")
-SCR_W = cfg["SCR_W"]       # 480
-SCR_H = cfg["SCR_H"]       # 320
-COL_W = SCR_W // 3         # 160
-ROW_H = SCR_H // 2         # 160
+cfg        = parse_defines(ROOT / "src" / "config.h")
+SCR_W      = cfg["SCR_W"]        # 480
+SCR_H      = cfg["SCR_H"]        # 320
+COL_W      = SCR_W // 3          # 160
+ROW_H      = cfg["ROW_H"]        # 130
+MINI_ROW_H = cfg["MINI_ROW_H"]   # 60
 
 # ─── Color helpers ────────────────────────────────────────────────────────────
 
@@ -112,9 +113,10 @@ def br_text(draw, text, x, y, font, color):
     draw.text((x - w, y - h), text, font=font, fill=color)
 
 def grid_lines(draw):
-    draw.line([(COL_W, 0), (COL_W, SCR_H)],     fill=DIV, width=1)
-    draw.line([(COL_W*2, 0), (COL_W*2, SCR_H)], fill=DIV, width=1)
-    draw.line([(0, ROW_H), (SCR_W, ROW_H)],      fill=DIV, width=1)
+    draw.line([(COL_W, 0), (COL_W, SCR_H)],       fill=DIV, width=1)
+    draw.line([(COL_W*2, 0), (COL_W*2, SCR_H)],   fill=DIV, width=1)
+    draw.line([(0, ROW_H), (SCR_W, ROW_H)],        fill=DIV, width=1)
+    draw.line([(0, ROW_H*2), (SCR_W, ROW_H*2)],    fill=DIV, width=1)
 
 def draw_tile(draw, col, row, label, number, unit, num_color, dimmed=False):
     cx = col * COL_W + COL_W // 2
@@ -125,6 +127,14 @@ def draw_tile(draw, col, row, label, number, unit, num_color, dimmed=False):
     tc(draw, label,  cx, y0 + 10, F_LABEL, lc)
     tc(draw, number, cx, y0 + 38, F_NUM,   nc)
     tc(draw, unit,   cx, y0 + 98, F_UNIT,  uc)
+
+def draw_mini_tile(draw, col, label, value, val_color, dimmed=False):
+    cx = col * COL_W + COL_W // 2
+    y0 = ROW_H * 2
+    lc = DIM if dimmed else UNIT_C
+    vc = DIM if dimmed else val_color
+    tc(draw, label, cx, y0 + 8,  F_SMALL, lc)
+    tc(draw, value, cx, y0 + 20, F_LABEL, vc)
 
 def draw_club_tile(draw, col, row, abbr):
     cx = col * COL_W + COL_W // 2
@@ -169,13 +179,10 @@ def screen_result(side_deg=2.3, side_dir="R"):
     draw_tile(draw, 1, 1, "TOTAL",  "209",  "m",    WHITE)
     draw_club_tile(draw, 2, 1, "7I")
 
-    # Bottom bar: side angle (left) + smash factor (right)
-    if abs(side_deg) < 0.5:
-        side_str = "STRAIGHT"
-    else:
-        side_str = f"{side_dir} {abs(side_deg):.1f}°"
-    tl(draw,     side_str,    4,          SCR_H - 3 - 8, F_SMALL, UNIT_C)
-    br_text(draw, "smash 1.55", SCR_W - 4, SCR_H - 3,     F_SMALL, UNIT_C)
+    # Mini row — side angle (col 0) + smash (col 1)
+    side_str = "STRAIGHT" if abs(side_deg) < 0.5 else f"{side_dir} {abs(side_deg):.1f}°"
+    draw_mini_tile(draw, 0, "SIDE",  side_str, WHITE)
+    draw_mini_tile(draw, 1, "SMASH", "1.55",   UNIT_C)
     return img
 
 # ─── Screen 3 — Calibration ───────────────────────────────────────────────────

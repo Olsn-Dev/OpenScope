@@ -48,9 +48,10 @@
 
 #define TFT_ROTATION  1         // landscape, USB connector on right
 #define SCR_W  480
-#define SCR_H  320
-#define COL_W  (SCR_W / 3)
-#define ROW_H  (SCR_H / 2)
+#define SCR_H      320
+#define COL_W      (SCR_W / 3)
+#define ROW_H      130   // main tile row height (2×130 + 60 = 320)
+#define MINI_ROW_H  60   // mini row at bottom for side angle + smash
 
 // RGB565 colour palette
 #define COL_DIV      0x2945   // dark teal — grid divider lines
