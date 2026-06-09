@@ -2,8 +2,12 @@
 
 // ─── Pins ─────────────────────────────────────────────────────────────────────
 
-#define RADAR_ADC_PIN    34   // Radar A — horizontal (primary speed)
-#define RADAR_ADC_PIN_B  35   // Radar B — angled upward (launch angle)
+// 3-radar layout:
+//   Radar L & R — ground level, V-formation (see RADAR_V_HALF_DEG below)
+//   Radar T     — mounted on top, tilted upward for launch angle
+#define RADAR_ADC_PIN_L  34   // Radar L — left V arm  (ADC1_CH6)
+#define RADAR_ADC_PIN_R  35   // Radar R — right V arm (ADC1_CH7)
+#define RADAR_ADC_PIN_T  32   // Radar T — top, tilted (ADC1_CH4)
 #define BTN_SCROLL       25   // Navigate / increase
 #define BTN_SELECT       26   // Confirm / decrease
 #define BTN_POWER        27   // Power (RTC GPIO17 — supports ext0 wake)
@@ -18,13 +22,23 @@
 #define HZ_TO_KMH  0.022384f   // km/h per Doppler Hz
 #define HZ_TO_MPH  0.013912f
 
-// ─── Launch angle ─────────────────────────────────────────────────────────────
-// RADAR_B_ANGLE_DEG must match the physical mounting angle of Radar B.
-
-#define RADAR_B_ANGLE_DEG  20.0f   // degrees above horizontal
+// ─── Radar geometry ───────────────────────────────────────────────────────────
+// RADAR_V_HALF_DEG: angle between each V arm and the shot direction (top view).
+//   The two ground radars form a V with total angle 2×RADAR_V_HALF_DEG.
+//   Physical mounting: V tip points toward target; each arm spreads back at this angle.
+//   Valid side-angle range: |β| < (90° − RADAR_V_HALF_DEG).
+//   CDM324 note: beam half-width ≈ 40°. Stronger signal with smaller RADAR_V_HALF_DEG.
+//   Default 75° matches a 150° total V; reduce to 20–30° for stronger signal.
+#define RADAR_V_HALF_DEG   75.0f   // degrees — half-angle of V (= 150° total V / 2)
+#define RADAR_T_ANGLE_DEG  20.0f   // top radar: degrees above horizontal
 #define DEG_TO_RAD         0.017453293f
-#define LAUNCH_MIN_DEG     2.0f    // below this → treat as no-detection
-#define LAUNCH_MAX_DEG     55.0f   // above this → treat as no-detection
+
+// ─── Launch and side angle limits ────────────────────────────────────────────
+// SIDE_MAX_DEG must be strictly less than (90 − RADAR_V_HALF_DEG).
+// For V_HALF=75°: max useful range ≈ ±14°. For V_HALF=20°: up to ±69°.
+#define LAUNCH_MIN_DEG     2.0f    // below this → no launch detection
+#define LAUNCH_MAX_DEG     55.0f   // above this → no launch detection
+#define SIDE_MAX_DEG       14.0f   // |side angle| limit in degrees
 
 // ─── Detection ────────────────────────────────────────────────────────────────
 
