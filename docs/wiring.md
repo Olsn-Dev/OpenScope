@@ -25,8 +25,17 @@ BTN_POWER  ──► GPIO27 ──► GND
 
 ## Radar Placement & Mounting Angles
 
-All three CDM324 modules must be mounted in fixed positions relative to
-the ball impact point.
+Place the entire unit **behind the golfer**, pointing toward the target —
+the same as commercial systems (Trackman, FlightScope, etc.). The ball
+flies *away* from the radar; Doppler measures receding speed identically
+to approaching speed.
+
+```
+Top view:
+
+ [Unit]  ←  ~0.5–1 m  →  [Golfer]  →  ●  →  →  →  target
+              behind                  ball
+```
 
 ### Ground radars — V-formation (Radar L & R)
 
@@ -41,15 +50,16 @@ Top view (looking down from above):
      [L]──►/      \◄──[R]
   GPIO34  /        \  GPIO35
 
-  Both radars on the ground, ~10 cm behind the tee.
+  Both radars on the ground, ~0.5–1 m behind the golfer.
   V-tip (vertex) points toward the target.
 ```
 
 **Key rules:**
 - Each radar arm is **45° from the shot direction** (90° total V-angle).
 - Mount both flat on the ground — use a spirit level.
-- Aim each radar's boresight toward the ball impact point.
-- Keep the vertex of the V within ~10 cm of the tee.
+- Aim the V-tip toward the ball impact point.
+- Place the unit **0.5–1 m behind the golfer**, slightly to the side
+  so it is not in the swing path.
 - Keep both radars **static** — vibration adds noise.
 
 **Why 45°?** This angle maximises `sin(V)·cos(V)`, giving the optimal
@@ -69,14 +79,12 @@ Estimated accuracy: < 0.1° at 150 km/h.
 ```
 Side view:
 
-                             ↗  Ball trajectory (~8–40° typical)
-                            /
-              Radar T ────►/   20° above horizontal
-             (GPIO32)     /
-                         /
+  [Golfer]          ●  →  →  →  ↗  Ball trajectory (~8–40° typical)
+                   tee         /
+  Radar T ───────────────────►/   20° above horizontal
+  (GPIO32)                   /
+  ~0.5–1 m behind golfer
 ──────────────────────────────────────────────────  Ground
-                 │
-              ~10 cm behind tee, centred on ball path
 ```
 
 **Key rules:**
