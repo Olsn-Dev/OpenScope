@@ -77,7 +77,16 @@ golf-launch-monitor/
 
 ## Radar Mounting
 
-Three radars in total. This is the most important step for accurate measurements.
+Place the entire unit **behind the golfer**, ~0.5–1 m back and slightly
+to the side — the same setup as commercial systems like Trackman.
+The ball flies *away* from the unit; Doppler works identically.
+
+```
+Top view:
+
+ [Unit]  ←  0.5–1 m  →  [Golfer]  →  ●  →  →  →  target
+              behind                  ball
+```
 
 ### Ground radars — V-formation (Radar L & R)
 
@@ -92,26 +101,21 @@ Top view (looking down):
         [L]    [R]
        GPIO34  GPIO35
 
-Both radars at ground level, ~10 cm behind tee.
-V-tip points toward target. Each arm is 45° from the shot direction.
+V-tip points toward target. Unit placed 0.5–1 m behind golfer.
 ```
 
-- Mount both flat on the ground, angled inward at **45° from the shot line**.
-- Aim the boresight of each radar toward the ball impact point.
-- Keep the two radars ≤ 10 cm apart at the vertex.
+- Mount both flat on the ground, each arm **45° from the shot line**.
+- Aim the V-tip toward the ball impact point.
+- Place **0.5–1 m behind the golfer**, slightly to the side of the swing path.
 
 ### Top radar — launch angle (Radar T)
 
 ```
 Side view:
 
-                         ↗  Ball trajectory (~8–40° typical)
-                        /
-          Radar T ────►/   20° above horizontal  (GPIO32)
-                       /
-─────────────────────────────────────────────────  Ground
-              │
-           ~10 cm behind tee, aimed at impact point
+  [Unit]         [Golfer]    ●  →  ↗  Ball trajectory
+  0.5–1 m back              tee  /
+  Radar T ──────────────────────►  20° above horizontal (GPIO32)
 ```
 
 - Mount tilted **20° upward**. Use a printed wedge or protractor.
