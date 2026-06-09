@@ -1,5 +1,4 @@
-<img width="1288" height="610" alt="5980D860-2881-47B6-B055-FEBFA808417B_1_105_c" src="https://github.com/user-attachments/assets/29a66b1b-a41c-4b02-980d-83b8b8e84ad8" />
-
+![OpenScope UI — all four screens](docs/openscope-ui.png)
 
 # OpenScope — DIY Golf Launch Monitor
 
