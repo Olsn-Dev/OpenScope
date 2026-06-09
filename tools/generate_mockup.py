@@ -157,20 +157,25 @@ def screen_ready():
 
 # ─── Screen 2 — Result ────────────────────────────────────────────────────────
 
-def screen_result():
+def screen_result(side_deg=2.3, side_dir="R"):
     img  = Image.new("RGB", (SCR_W, SCR_H), BG)
     draw = ImageDraw.Draw(img)
     grid_lines(draw)
 
-    draw_tile(draw, 0, 0, "CLUB",   "98",   "km/h",     WHITE)
-    draw_tile(draw, 1, 0, "BALL",   "152",  "km/h",     WHITE)
-    draw_tile(draw, 2, 0, "LAUNCH", "19.4", "°",   GREEN)   # ← launch angle tile
-    draw_tile(draw, 0, 1, "CARRY",  "187",  "m",        WHITE)
-    draw_tile(draw, 1, 1, "TOTAL",  "209",  "m",        WHITE)
+    draw_tile(draw, 0, 0, "CLUB",   "98",   "km/h", WHITE)
+    draw_tile(draw, 1, 0, "BALL",   "152",  "km/h", WHITE)
+    draw_tile(draw, 2, 0, "LAUNCH", "19.4", "°",    GREEN)
+    draw_tile(draw, 0, 1, "CARRY",  "187",  "m",    WHITE)
+    draw_tile(draw, 1, 1, "TOTAL",  "209",  "m",    WHITE)
     draw_club_tile(draw, 2, 1, "7I")
 
-    # Smash factor footnote (bottom-right)
-    br_text(draw, "smash 1.55", SCR_W - 4, SCR_H - 3, F_SMALL, UNIT_C)
+    # Bottom bar: side angle (left) + smash factor (right)
+    if abs(side_deg) < 0.5:
+        side_str = "STRAIGHT"
+    else:
+        side_str = f"{side_dir} {abs(side_deg):.1f}°"
+    tl(draw,     side_str,    4,          SCR_H - 3 - 8, F_SMALL, UNIT_C)
+    br_text(draw, "smash 1.55", SCR_W - 4, SCR_H - 3,     F_SMALL, UNIT_C)
     return img
 
 # ─── Screen 3 — Calibration ───────────────────────────────────────────────────
