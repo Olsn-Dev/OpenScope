@@ -8,9 +8,9 @@ All components from AliExpress unless noted. Prices approximate (SEK).
 
 | # | Component | Search / Part number | Qty | ~Price (SEK) |
 |---|-----------|----------------------|-----|--------------|
-| 1 | ESP32 dev board with 18650 battery holder | `ESP32 18650 battery holder board` | 1 | 90 |
+| 1 | ESP32 dev board with 18650 battery holder | `ESP32 18650 battery holder board` | 1 | 160 |
 | 2 | 18650 Li-Ion battery, 3000 mAh, protected | `18650 3000mAh protected battery` | 1 | 60 |
-| 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 2 | 540 |
+| 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 2 | 40 |
 | 4 | LM358 op-amp IC or module | `LM358 op amp DIP8` or `LM358 module` | 1 | 10 |
 | 5 | 3.5" TFT display, SPI, ST7796, 480×320 | `3.5 inch TFT LCD SPI ST7796 480x320` | 1 | 120 |
 | 6 | Tactile push button, 6×6 mm, PCB mount | `6x6mm tactile push button switch` | 4 | 8 |
@@ -62,10 +62,10 @@ it to 300 Hz – 16 kHz (covers ~7–360 km/h).
 
 | Category | ~Price (SEK) |
 |----------|-------------|
-| Main components | 825 |
+| Main components | ~400 |
 | Preamp passives | 25 |
 | Wiring & assembly | 60 |
-| **Total** | **~910 SEK** |
+| **Total** | **~500 SEK** |
 
 ---
 
