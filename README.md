@@ -1,4 +1,5 @@
-<img width="1418" height="672" alt="5980D860-2881-47B6-B055-FEBFA808417B_1_201_a" src="https://github.com/user-attachments/assets/8935de40-4522-4e0e-a2bf-af1001c883e9" />
+<img width="1288" height="610" alt="5980D860-2881-47B6-B055-FEBFA808417B_1_105_c" src="https://github.com/user-attachments/assets/29a66b1b-a41c-4b02-980d-83b8b8e84ad8" />
+
 
 # OpenScope — DIY Golf Launch Monitor
 
@@ -105,7 +106,9 @@ Three dedicated buttons:
 
 ## Display Layout
 
-All screens share the same 3×2 tile grid:
+The firmware has four screens:
+
+### Ready / Result — shared 3×2 tile grid
 
 ```
 ┌──────────┬──────────┬──────────┐
@@ -122,6 +125,28 @@ All screens share the same 3×2 tile grid:
 The Launch tile turns **green** when both radars detect the shot and a
 valid angle is computed. It shows `--` (dimmed) when only one radar
 fired — carry then falls back to an empirical estimate.
+
+### Settings screen
+
+Reached by pressing **Select** from the main screen.
+
+```
+┌─────────────────────────────────────────────┐
+│  Settings   scroll=next  select=choose  …   │
+├─────────────────────────────────────────────┤
+│► Units                               km/h   │
+│  Reset Stats                            7I  │
+│  Calibration                            ►   │
+│─────────────────────────────────────────────│
+│                  OpenScope v0.6             │
+└─────────────────────────────────────────────┘
+```
+
+| Item | Action |
+|------|--------|
+| Units | Toggle km/h ↔ mph |
+| Reset Stats | Clears avg/best for the active club |
+| Calibration | Opens calibration screen |
 
 ## Calibration
 
