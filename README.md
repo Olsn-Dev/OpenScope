@@ -1,4 +1,4 @@
-![OpenScope UI — all four screens](docs/openscope-ui.png)
+<img width="1288" height="610" alt="5980D860-2881-47B6-B055-FEBFA808417B_1_105_c" src="https://github.com/user-attachments/assets/72ecf909-d51e-4d10-a916-eb443e34f989" />
 
 # OpenScope — DIY Golf Launch Monitor
 
@@ -212,7 +212,7 @@ each club's typical launch angle.
 
 ## UI Mockup
 
-![OpenScope UI](docs/openscope-ui.png)
+![OpenScope UI — all four screens](docs/openscope-ui.png)
 
 ## License
 
