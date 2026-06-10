@@ -19,3 +19,12 @@ void record_carry(int club_idx, float carry, ClubStats* stats);
 
 // Zero out stats for club idx and persist.
 void reset_stats(int idx, ClubStats* stats);
+
+// ─── Touch calibration (XPT2046) ──────────────────────────────────────────────
+
+// Load the 5-value TFT_eSPI touch calibration blob.
+// Returns true if a valid calibration was previously stored.
+bool nvs_load_touch_cal(uint16_t cal[5]);
+
+// Persist the 5-value touch calibration blob.
+void nvs_save_touch_cal(const uint16_t cal[5]);

@@ -34,6 +34,84 @@ void display_goodbye()
     tft.fillScreen(TFT_BLACK);
 }
 
+// ─── Touch ────────────────────────────────────────────────────────────────────
+
+static bool s_prev_touch = false;   // for rising-edge tap detection
+
+void display_set_touch_cal(const uint16_t* cal)
+{
+    tft.setTouch((uint16_t*)cal);
+}
+
+void display_touch_calibrate(uint16_t cal[5])
+{
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.drawString("Touch each arrow in turn", SCR_W / 2, SCR_H / 2 - 12);
+    tft.drawString("to calibrate the screen",  SCR_W / 2, SCR_H / 2 + 12);
+    delay(1200);
+    tft.fillScreen(TFT_BLACK);
+    tft.calibrateTouch(cal, TFT_CYAN, TFT_BLACK, 18);
+    tft.setTouch(cal);
+}
+
+bool ui_get_tap(int* x, int* y)
+{
+    uint16_t tx, ty;
+    bool pressed = tft.getTouch(&tx, &ty);   // true while a valid press is held
+    bool edge    = pressed && !s_prev_touch; // fire once, on press
+    s_prev_touch = pressed;
+    if (edge) { *x = (int)tx; *y = (int)ty; }
+    return edge;
+}
+
+// ─── Hit-testing ──────────────────────────────────────────────────────────────
+
+static inline bool in_rect(int x, int y, int rx, int ry, int rw, int rh)
+{
+    return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+}
+
+int ui_splash_hit(int x, int y)
+{
+    if (y >= BAR_Y) return 2;                                   // settings bar
+    if (in_rect(x, y, COL_W * 2, ROW_H, COL_W, ROW_H)) return 1; // club circle
+    return 0;
+}
+
+int ui_result_hit(int /*x*/, int /*y*/) { return 1; }          // any tap dismisses
+
+int ui_settings_hit(int /*x*/, int y)
+{
+    if (y >= SET_DONE_Y) return 9;                              // DONE bar
+    for (int i = 0; i < SET_N_ROWS; i++) {
+        int top = SET_HDR_H + i * SET_ROW_H;
+        if (y >= top && y < top + SET_ROW_H) return i;
+    }
+    return -1;
+}
+
+int ui_cal_hit(int x, int y)
+{
+    if (y < BAR_Y) return 0;
+    if (x < COL_W)      return 1;   // -10
+    if (x < COL_W * 2)  return 2;   // save + exit
+    return 3;                       // +10
+}
+
+// ─── Touch button primitive ───────────────────────────────────────────────────
+
+static void draw_button(int x, int y, int w, int h, const char* label,
+                        uint16_t border, uint16_t text_col, bool filled = true)
+{
+    if (filled) tft.fillRect(x + 1, y + 1, w - 2, h - 2, COL_BTN_BG);
+    tft.drawRect(x, y, w, h, border);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(4); tft.setTextColor(text_col, filled ? COL_BTN_BG : TFT_BLACK);
+    tft.drawString(label, x + w / 2, y + h / 2);
+}
+
 // ─── Tile grid primitives ─────────────────────────────────────────────────────
 
 static void draw_grid_lines()
@@ -77,7 +155,7 @@ static void draw_mini_tile(int col, const char* label, const char* value,
     tft.drawString(value, cx, y0 + 20);
 }
 
-static void draw_club_tile(int col, int row, int club_idx)
+static void draw_club_tile(int col, int row, int club_idx, bool tap_hint = false)
 {
     const int cx = col * COL_W + COL_W / 2;
     const int cy = row * ROW_H + ROW_H / 2;
@@ -86,6 +164,10 @@ static void draw_club_tile(int col, int row, int club_idx)
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(4); tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.drawString(CLUBS[club_idx].abbr, cx, cy);
+    if (tap_hint) {
+        tft.setTextFont(1); tft.setTextColor(COL_UNIT, TFT_BLACK);
+        tft.drawString("TAP TO CHANGE", cx, cy + 50);
+    }
 }
 
 // ─── Screens ──────────────────────────────────────────────────────────────────
@@ -117,11 +199,14 @@ void ui_splash(int club_idx, const ClubStats* stats, bool use_mph)
     }
     draw_tile(0, 1, "Avg",  avg,  dist_unit(use_mph), TFT_WHITE);
     draw_tile(1, 1, "Best", best, dist_unit(use_mph), TFT_GREEN);
-    draw_club_tile(2, 1, club_idx);
+    draw_club_tile(2, 1, club_idx, true);
 
     tft.setTextDatum(TC_DATUM);
     tft.setTextFont(2); tft.setTextColor(COL_DIM, TFT_BLACK);
     tft.drawString("SWING WHEN READY", SCR_W / 2, ROW_H + 4);
+
+    // Bottom action bar — full-width SETTINGS touch button.
+    draw_button(0, BAR_Y, SCR_W, BAR_H, "SETTINGS", COL_BTN_BRD, TFT_CYAN);
 }
 
 void ui_result(float ball_kmh, float club_kmh,
@@ -175,60 +260,64 @@ void ui_result(float ball_kmh, float club_kmh,
     } else {
         draw_mini_tile(1, "SMASH", "--", COL_UNIT, true);
     }
+
+    // Col 2 of the mini row — tap-to-continue hint (any tap dismisses).
+    const int cx = 2 * COL_W + COL_W / 2;
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    tft.drawString("TAP TO", cx, ROW_H * 2 + 22);
+    tft.drawString("CONTINUE", cx, ROW_H * 2 + 40);
 }
 
 // ─── Settings screen ──────────────────────────────────────────────────────────
 
-void ui_settings_draw(int sel, int club_idx, bool use_mph, bool reset_done)
+void ui_settings_draw(int club_idx, bool use_mph, bool reset_done)
 {
     tft.fillScreen(TFT_BLACK);
 
-    tft.fillRect(0, 0, SCR_W, 48, TFT_NAVY);
+    // Header
+    tft.fillRect(0, 0, SCR_W, SET_HDR_H, TFT_NAVY);
     tft.setTextDatum(ML_DATUM);
     tft.setTextFont(4); tft.setTextColor(TFT_CYAN, TFT_NAVY);
-    tft.drawString("Settings", 16, 24);
+    tft.drawString("Settings", 16, SET_HDR_H / 2);
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_NAVY);
     tft.setTextDatum(MR_DATUM);
-    tft.drawString("scroll=next  select=choose  power=exit", SCR_W - 12, 24);
+    tft.drawString("tap an item", SCR_W - 12, SET_HDR_H / 2);
 
     char unit_val[8];
     char reset_val[12];
     snprintf(unit_val,  sizeof(unit_val),  "%s", use_mph ? "mph" : "km/h");
     snprintf(reset_val, sizeof(reset_val), "%s", reset_done ? "Done!" : CLUBS[club_idx].name);
 
-    const char* labels[] = { "Units",    "Reset Stats", "Calibration" };
-    const char* values[] = { unit_val,    reset_val,     "\x10"        };
+    const char* labels[SET_N_ROWS] = { "Units", "Reset Stats", "Radar Cal.", "Touch Cal." };
+    const char* values[SET_N_ROWS] = { unit_val, reset_val,     "\x10",      "\x10"       };
 
-    for (int i = 0; i < 3; i++) {
-        const int y  = 68 + i * 74;
-        const bool active = (i == sel);
-        if (active) {
-            tft.fillRect(0, y - 2, SCR_W, 54, COL_SEL_BG);
-            tft.fillRect(0, y - 2, 4,     54, TFT_CYAN);
-        }
-        uint16_t bg = active ? COL_SEL_BG : TFT_BLACK;
+    // Tappable item rows — each is a bordered button-style strip.
+    for (int i = 0; i < SET_N_ROWS; i++) {
+        const int y = SET_HDR_H + i * SET_ROW_H;
+        tft.fillRect(0, y + 2, SCR_W, SET_ROW_H - 4, COL_BTN_BG);
+        tft.drawFastHLine(0, y, SCR_W, COL_DIV);
+        tft.fillRect(0, y + 2, 4, SET_ROW_H - 4, TFT_CYAN);   // accent stripe
+
         tft.setTextDatum(ML_DATUM);
-        tft.setTextFont(4);
-        tft.setTextColor(active ? TFT_WHITE : COL_UNIT, bg);
-        tft.drawString(labels[i], 20, y + 22);
+        tft.setTextFont(4); tft.setTextColor(TFT_WHITE, COL_BTN_BG);
+        tft.drawString(labels[i], 20, y + SET_ROW_H / 2);
 
-        uint16_t vc = active ? TFT_CYAN : COL_DIM;
-        if (i == 1 && reset_done) vc = TFT_GREEN;
-        tft.setTextColor(vc, bg);
+        uint16_t vc = (i == 1 && reset_done) ? TFT_GREEN : TFT_CYAN;
+        tft.setTextColor(vc, COL_BTN_BG);
         tft.setTextDatum(MR_DATUM);
-        tft.drawString(values[i], SCR_W - 20, y + 22);
+        tft.drawString(values[i], SCR_W - 20, y + SET_ROW_H / 2);
     }
 
-    tft.drawFastHLine(0, SCR_H - 22, SCR_W, COL_DIV);
-    tft.setTextDatum(BC_DATUM);
-    tft.setTextFont(2); tft.setTextColor(COL_DIM, TFT_BLACK);
-    tft.drawString("OpenScope v0.6", SCR_W / 2, SCR_H - 4);
+    // DONE bar — exit settings.
+    draw_button(0, SET_DONE_Y, SCR_W, SCR_H - SET_DONE_Y, "DONE",
+                COL_BTN_BRD, TFT_GREEN);
 }
 
 // ─── Calibration screen ───────────────────────────────────────────────────────
 
 #define CAL_SPEC_Y  34
-#define CAL_SPEC_H  150
+#define CAL_SPEC_H  120
 #define CAL_SPEC_X  10
 #define CAL_SPEC_W  (SCR_W - 20)
 
@@ -241,7 +330,7 @@ void ui_cal_header()
     tft.drawString("CALIBRATION MODE", 10, 15);
     tft.setTextDatum(MR_DATUM);
     tft.setTextColor(TFT_WHITE, COL_CAL_HDR);
-    tft.drawString("scroll=+10  select=-10  power=save+exit", SCR_W - 8, 15);
+    tft.drawString("tap the buttons below", SCR_W - 8, 15);
 
     // Frequency axis tick labels
     tft.setTextFont(1); tft.setTextColor(COL_DIM, TFT_BLACK);
@@ -253,6 +342,11 @@ void ui_cal_header()
                                (MAX_DETECT_HZ - MIN_DETECT_HZ) * CAL_SPEC_W);
         tft.drawString(t.l, xp, CAL_SPEC_Y + CAL_SPEC_H + 4);
     }
+
+    // Bottom action bar — three touch buttons: [-10] [SAVE] [+10].
+    draw_button(0,         BAR_Y, COL_W, BAR_H, "-10",  COL_BTN_BRD, TFT_CYAN);
+    draw_button(COL_W,     BAR_Y, COL_W, BAR_H, "SAVE", COL_BTN_BRD, TFT_GREEN);
+    draw_button(COL_W * 2, BAR_Y, COL_W, BAR_H, "+10",  COL_BTN_BRD, TFT_CYAN);
 }
 
 void ui_cal_update(const double* spectrum,
@@ -292,10 +386,10 @@ void ui_cal_update(const double* spectrum,
             tft.drawFastVLine(px, CAL_SPEC_Y, 6, TFT_WHITE);
     }
 
-    // Metrics rows
+    // Metrics rows — clear only down to the action bar so its buttons survive.
     char buf[48];
-    const int MY = CAL_SPEC_Y + CAL_SPEC_H + 16;
-    tft.fillRect(0, MY - 2, SCR_W, SCR_H - MY + 2, TFT_BLACK);
+    const int MY = CAL_SPEC_Y + CAL_SPEC_H + 14;   // 168
+    tft.fillRect(0, MY - 2, SCR_W, BAR_Y - (MY - 2), TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
 
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
@@ -317,29 +411,30 @@ void ui_cal_update(const double* spectrum,
     tft.setTextFont(4); tft.setTextColor(TFT_YELLOW, TFT_BLACK);
     tft.drawString(buf, 332, MY + 14);
 
-    const int R2Y = MY + 44;
+    // Peak-frequency readout (Hz + speed) — useful for verifying calibration.
+    const int R2Y = MY + 44;   // 212
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
-    tft.drawString("PEAK FREQ", 8, R2Y);
+    tft.drawString("PEAK", 8, R2Y);
     if (peak_hz > 0.0)
-        snprintf(buf, sizeof(buf), "%.0f Hz  =  %.1f %s",
+        snprintf(buf, sizeof(buf), "%.0f Hz = %.1f %s",
                  peak_hz, disp_speed((float)peak_hz * HZ_TO_KMH, use_mph),
                  speed_unit(use_mph));
     else
         snprintf(buf, sizeof(buf), "---");
     tft.setTextFont(2); tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawString(buf, 8, R2Y + 12);
+    tft.drawString(buf, 56, R2Y);
 
-    const int R3Y = R2Y + 34;
+    // Threshold + suggested value.
+    const int R3Y = R2Y + 24;   // 236
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
     tft.drawString("THRESHOLD", 8, R3Y);
     snprintf(buf, sizeof(buf), "%.0f", threshold);
-    tft.setTextFont(7); tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.drawString(buf, 8, R3Y + 8);
+    tft.setTextFont(4); tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.drawString(buf, 110, R3Y - 6);
 
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
-    tft.drawString("SUGGESTED", 200, R3Y);
-    snprintf(buf, sizeof(buf), "%.0f  (noise x4)",
-             max(noise_ema * 4.0f, noise_ema + 20.0f));
-    tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.drawString(buf, 200, R3Y + 12);
+    tft.drawString("SUGGESTED", 230, R3Y);
+    snprintf(buf, sizeof(buf), "%.0f", max(noise_ema * 4.0f, noise_ema + 20.0f));
+    tft.setTextFont(4); tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.drawString(buf, 340, R3Y - 6);
 }
