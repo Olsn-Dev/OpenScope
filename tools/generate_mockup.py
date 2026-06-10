@@ -70,8 +70,10 @@ DIV     = rgb565(cfg["COL_DIV"])
 UNIT_C  = rgb565(cfg["COL_UNIT"])
 DIM     = rgb565(cfg["COL_DIM"])
 CAL_HDR = rgb565(cfg["COL_CAL_HDR"])
-BTN_BG  = rgb565(cfg.get("COL_BTN_BG",  0x18E3))
-BTN_BRD = rgb565(cfg.get("COL_BTN_BRD", 0x4208))
+BTN_BG   = rgb565(cfg.get("COL_BTN_BG",  0x18E3))
+BTN_BRD  = rgb565(cfg.get("COL_BTN_BRD", 0x4208))
+TILE_BG  = rgb565(cfg.get("COL_TILE_BG", 0x0841))
+BTN_R    = cfg.get("BTN_RADIUS", 8)
 
 # ─── Font loader ──────────────────────────────────────────────────────────────
 
@@ -137,6 +139,16 @@ def mr(draw, text, x, cy, font, color):
     w, h = bb[2] - bb[0], bb[3] - bb[1]
     draw.text((x - w, cy - h // 2 - bb[1]), text, font=font, fill=color)
 
+def rounded_rect(draw, x, y, w, h, r, fill=None, outline=None, width=1):
+    try:
+        draw.rounded_rectangle([(x, y), (x+w-1, y+h-1)], radius=r,
+                                fill=fill, outline=outline, width=width)
+    except AttributeError:
+        if fill:
+            draw.rectangle([x, y, x+w-1, y+h-1], fill=fill)
+        if outline:
+            draw.rectangle([x, y, x+w-1, y+h-1], outline=outline, width=width)
+
 def grid_lines(draw):
     draw.line([(COL_W, 0), (COL_W, SCR_H)],       fill=DIV, width=1)
     draw.line([(COL_W*2, 0), (COL_W*2, SCR_H)],   fill=DIV, width=1)
@@ -144,9 +156,9 @@ def grid_lines(draw):
     draw.line([(0, ROW_H*2), (SCR_W, ROW_H*2)],    fill=DIV, width=1)
 
 def draw_button(draw, x, y, w, h, label, text_col):
-    """Bordered touch button: dark slate fill + grey border + centered label."""
-    draw.rectangle([x+1, y+1, x+w-2, y+h-2], fill=BTN_BG)
-    draw.rectangle([x, y, x+w-1, y+h-1], outline=BTN_BRD, width=1)
+    """Rounded touch button: dark slate fill + grey border + centered label."""
+    rounded_rect(draw, x+1, y+1, w-2, h-2, BTN_R, fill=BTN_BG)
+    rounded_rect(draw, x, y, w, h, BTN_R, outline=BTN_BRD, width=1)
     mc(draw, label, x + w // 2, y + h // 2, F_BTN, text_col)
 
 def draw_tile(draw, col, row, label, number, unit, num_color, dimmed=False):
@@ -170,12 +182,12 @@ def draw_mini_tile(draw, col, label, value, val_color, dimmed=False):
 def draw_club_tile(draw, col, row, abbr, tap_hint=False):
     cx = col * COL_W + COL_W // 2
     cy = row * ROW_H + ROW_H // 2
-    r  = 42
-    draw.ellipse([cx-r, cy-r, cx+r, cy+r],   outline=CYAN, width=1)
-    draw.ellipse([cx-r-1, cy-r-1, cx+r+1, cy+r+1], outline=CYAN, width=1)
+    r  = 43
+    draw.ellipse([cx-r, cy-r, cx+r, cy+r], fill=BTN_BG)
+    draw.ellipse([cx-r, cy-r, cx+r, cy+r], outline=CYAN, width=2)
     mc(draw, abbr, cx, cy, F_LABEL, WHITE)
     if tap_hint:
-        tc(draw, "TAP TO CHANGE", cx, cy + 44, F_SMALL, UNIT_C)
+        tc(draw, "TAP TO CHANGE", cx, cy + 46, F_SMALL, UNIT_C)
 
 # ─── Screen 1 — Ready ─────────────────────────────────────────────────────────
 
@@ -240,14 +252,14 @@ def screen_settings():
     labels = ["Units", "Reset Stats", "Radar Cal.", "Touch Cal."]
     values = ["km/h",  "7I",          "►",          "►"]
 
-    # Tappable item rows — each a bordered button-style strip
+    # Tappable item rows — rounded card strips with cyan accent stripe
     for i, (label, value) in enumerate(zip(labels, values)):
         y = SET_HDR_H + i * SET_ROW_H
-        draw.rectangle([0, y + 2, SCR_W, y + SET_ROW_H - 2], fill=BTN_BG)
         draw.line([(0, y), (SCR_W, y)], fill=DIV, width=1)
-        draw.rectangle([0, y + 2, 4, y + SET_ROW_H - 2], fill=CYAN)  # accent stripe
-        ml(draw, label, 20,         y + SET_ROW_H // 2, F_MED, WHITE)
-        mr(draw, value, SCR_W - 20, y + SET_ROW_H // 2, F_MED, CYAN)
+        rounded_rect(draw, 4, y + 4, SCR_W - 8, SET_ROW_H - 8, BTN_R // 2, fill=BTN_BG)
+        rounded_rect(draw, 4, y + 4, 6, SET_ROW_H - 8, BTN_R // 2, fill=CYAN)  # accent
+        ml(draw, label, 22,         y + SET_ROW_H // 2, F_MED, WHITE)
+        mr(draw, value, SCR_W - 16, y + SET_ROW_H // 2, F_MED, CYAN)
 
     # DONE bar — exit settings
     draw_button(draw, 0, SET_DONE_Y, SCR_W, SCR_H - SET_DONE_Y, "DONE", GREEN)

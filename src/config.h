@@ -63,6 +63,8 @@
 #define COL_SEL_BG   0x1082   // very dark blue — settings selection bg
 #define COL_BTN_BG   0x18E3   // dark slate — touch button fill
 #define COL_BTN_BRD  0x4208   // grey       — touch button border
+#define COL_TILE_BG  0x0841   // very dark grey — card tile background
+#define BTN_RADIUS   8        // rounded corner radius for buttons/rows
 
 // ─── Touch layout ─────────────────────────────────────────────────────────────
 // Geometry shared between the draw code (display.cpp) and hit-testing.
