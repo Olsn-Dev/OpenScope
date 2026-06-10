@@ -9,6 +9,24 @@ float       disp_dist(float m,      bool use_mph);
 const char* speed_unit(bool use_mph);
 const char* dist_unit(bool use_mph);
 
+// ─── Touch ────────────────────────────────────────────────────────────────────
+
+// Apply a stored 5-value XPT2046 calibration. Call after display_init().
+void display_set_touch_cal(const uint16_t* cal);
+
+// Run the interactive 4-corner touch calibration; fills cal[5]. Blocks until done.
+void display_touch_calibrate(uint16_t cal[5]);
+
+// Return true on a fresh screen tap (rising edge), writing screen coords to x,y.
+// Debounced; returns false while held or released.
+bool ui_get_tap(int* x, int* y);
+
+// Per-screen hit-testing — map a tap (x,y) to a logical action.
+int ui_splash_hit(int x, int y);    // 1 = next club, 2 = open settings, 0 = none
+int ui_result_hit(int x, int y);    // 1 = dismiss, 0 = none (any tap dismisses)
+int ui_settings_hit(int x, int y);  // 0..3 = item rows, 9 = DONE/exit, -1 = none
+int ui_cal_hit(int x, int y);       // 1 = -10, 2 = save+exit, 3 = +10, 0 = none
+
 // ─── Screens ──────────────────────────────────────────────────────────────────
 
 // Initialise the TFT hardware. Call once in setup().
@@ -28,9 +46,9 @@ void ui_result(float ball_kmh, float club_kmh,
                float launch_deg, float side_deg,
                int club_idx, bool use_mph);
 
-// Settings menu. sel = highlighted row (0–2).
+// Settings menu — touch rows, no highlighted selection.
 // reset_done = true shows a brief "Done!" confirmation on the reset item.
-void ui_settings_draw(int sel, int club_idx, bool use_mph, bool reset_done = false);
+void ui_settings_draw(int club_idx, bool use_mph, bool reset_done = false);
 
 // Calibration screen header (call once when entering calibration).
 void ui_cal_header();

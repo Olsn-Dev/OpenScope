@@ -8,9 +8,11 @@
 #define RADAR_ADC_PIN_L  34   // Radar L — left V arm  (ADC1_CH6)
 #define RADAR_ADC_PIN_R  35   // Radar R — right V arm (ADC1_CH7)
 #define RADAR_ADC_PIN_T  32   // Radar T — top, tilted (ADC1_CH4)
-#define BTN_SCROLL       25   // Navigate / increase
-#define BTN_SELECT       26   // Confirm / decrease
 #define BTN_POWER        27   // Power (RTC GPIO17 — supports ext0 wake)
+
+// All other navigation is via the touch panel (XPT2046, 4-wire resistive).
+// The touch controller shares the display SPI bus; its pins (TOUCH_CS=21,
+// MISO=19) are configured in platformio.ini build flags, not here.
 
 // ─── Sampling & FFT ───────────────────────────────────────────────────────────
 
@@ -59,3 +61,21 @@
 #define COL_DIM      0x2104   // near-black — inactive / dimmed tiles
 #define COL_CAL_HDR  0x5920   // dark green — calibration header bar
 #define COL_SEL_BG   0x1082   // very dark blue — settings selection bg
+#define COL_BTN_BG   0x18E3   // dark slate — touch button fill
+#define COL_BTN_BRD  0x4208   // grey       — touch button border
+
+// ─── Touch layout ─────────────────────────────────────────────────────────────
+// Geometry shared between the draw code (display.cpp) and hit-testing.
+// A "bar" is a full-width action strip at the bottom of a screen.
+
+#define BAR_H        60                  // bottom action-bar height
+#define BAR_Y        (SCR_H - BAR_H)     // 260 — top edge of bottom bars
+
+// Settings screen
+#define SET_HDR_H    48                  // header height
+#define SET_ROW_H    50                  // height of each tappable item row
+#define SET_N_ROWS    4                  // Units, Reset, Radar cal, Touch cal
+#define SET_DONE_Y   256                 // top of the DONE bar (256–320)
+
+// Calibration bottom bar holds three buttons: [-10] [SAVE] [+10],
+// each one COL_W wide at y = BAR_Y.

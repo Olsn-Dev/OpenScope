@@ -12,8 +12,8 @@ All components from AliExpress unless noted. Prices approximate (SEK).
 | 2 | 18650 Li-Ion battery, 3000 mAh, protected | `18650 3000mAh protected battery` | 1 | 60 |
 | 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 3 | 60 |
 | 4 | LM358 op-amp IC | `LM358 op amp DIP8` | 3 | 20 |
-| 5 | 3.5" TFT display, SPI, ST7796, 480×320 | `3.5 inch TFT LCD SPI ST7796 480x320` | 1 | 120 |
-| 6 | Tactile push button, 6×6 mm, PCB mount | `6x6mm tactile push button switch` | 4 | 8 |
+| 5 | 3.5" TFT display, SPI, ILI9488, 480×320, **with 4-wire touch (XPT2046)** | `3.5 inch SPI TFT ILI9488 480x320 touch` | 1 | 120 |
+| 6 | Tactile push button, 6×6 mm, PCB mount (Power only) | `6x6mm tactile push button switch` | 2 | 4 |
 
 Links to recomended parts:
 
@@ -72,18 +72,23 @@ bandpass-filters it to 300 Hz – 16 kHz (covers ~7–360 km/h).
 
 ## Notes
 
-### Buttons
-The firmware (v0.5) uses **three separate buttons**:
+### Controls — touch screen + one button
+The firmware (v0.7) is **touch-driven**. The only physical button is Power:
 
 | Button | GPIO | Function |
 |--------|------|---------|
-| Scroll | GPIO25 | Cycle clubs / navigate menus / threshold +10 in calibration |
-| Select | GPIO26 | Open settings / confirm selection / threshold -10 in calibration |
 | Power  | GPIO27 | Hold 2 s → deep sleep; press to wake (RTC GPIO) |
 
-Connect each button between the GPIO pin and GND. No external resistors needed —
-the ESP32 uses internal pull-ups. For an enclosed device, mount all three buttons
-in drilled holes on the side of the housing. Order 4 buttons (3 used + 1 spare).
+Connect the button between GPIO27 and GND — internal pull-up, no resistor.
+Order 2 buttons (1 used + 1 spare). All navigation (club select, settings,
+calibration) is done on the touch screen.
+
+### Display + touch
+Buy the **ILI9488** 480×320 SPI variant **with a 4-wire resistive touch panel**
+(XPT2046 controller). The touch shares the SPI bus with the display and needs
+**MISO connected (GPIO19)** plus its own chip-select (`TOUCH_CS` = GPIO21).
+A first-boot 4-corner calibration is stored in NVS; re-run it any time from
+Settings → Touch Cal.
 
 ### CDM324 radar (×3)
 Three CDM324 modules are used — two for side angle, one for launch angle:

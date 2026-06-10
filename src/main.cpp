@@ -1,5 +1,5 @@
-// OpenScope — DIY Golf Launch Monitor  v0.6
-// ESP32 + 2× CDM324 24 GHz Doppler Radar + ST7796 3.5" TFT
+// OpenScope — DIY Golf Launch Monitor  v0.7
+// ESP32 + 3× CDM324 24 GHz Doppler Radar + ILI9488 3.5" touch TFT
 //
 // Source layout:
 //   config.h   — all compile-time constants and pin definitions
@@ -24,29 +24,9 @@ static int       g_club      = 0;
 static float     g_threshold = PEAK_THRESHOLD_DEFAULT;
 static bool      g_use_mph   = false;
 
-// ─── Buttons ──────────────────────────────────────────────────────────────────
-
-static bool s_prev_scroll = false;
-static bool s_prev_select = false;
-
-// Returns true on a clean falling-edge press (25 ms debounce).
-static bool scroll_pressed()
-{
-    bool cur = (digitalRead(BTN_SCROLL) == LOW);
-    if (cur && !s_prev_scroll) { delay(25); cur = (digitalRead(BTN_SCROLL) == LOW); }
-    bool edge = cur && !s_prev_scroll;
-    s_prev_scroll = cur;
-    return edge;
-}
-
-static bool select_pressed()
-{
-    bool cur = (digitalRead(BTN_SELECT) == LOW);
-    if (cur && !s_prev_select) { delay(25); cur = (digitalRead(BTN_SELECT) == LOW); }
-    bool edge = cur && !s_prev_select;
-    s_prev_select = cur;
-    return edge;
-}
+// ─── Power button ─────────────────────────────────────────────────────────────
+// The only physical control left. All navigation is on the touch screen
+// (see ui_get_tap / ui_*_hit in display.h).
 
 // Returns true if the power button is held for hold_ms.
 // Blocks until released or timeout; ignores short taps.
@@ -89,16 +69,25 @@ static void calibration_loop()
                            FFT_SIZE/2 - 1);
 
     while (true) {
-        if (scroll_pressed()) {
-            g_threshold = min(g_threshold + 10.0f, 2000.0f);
-            Serial.printf("[CAL] Threshold → %.0f\n", g_threshold);
-        }
-        if (select_pressed()) {
-            g_threshold = max(g_threshold - 10.0f, 5.0f);
-            Serial.printf("[CAL] Threshold → %.0f\n", g_threshold);
+        int tx, ty;
+        if (ui_get_tap(&tx, &ty)) {
+            switch (ui_cal_hit(tx, ty)) {
+                case 1:  // -10
+                    g_threshold = max(g_threshold - 10.0f, 5.0f);
+                    Serial.printf("[CAL] Threshold → %.0f\n", g_threshold);
+                    break;
+                case 3:  // +10
+                    g_threshold = min(g_threshold + 10.0f, 2000.0f);
+                    Serial.printf("[CAL] Threshold → %.0f\n", g_threshold);
+                    break;
+                case 2:  // SAVE + exit
+                    nvs_save_settings(g_threshold, g_use_mph, g_club);
+                    Serial.println("[CAL] Threshold saved, exit");
+                    return;
+            }
         }
         if (power_held(2000)) {
-            // Save only the threshold (other settings saved on settings exit)
+            // Hardware fallback: save only the threshold and exit.
             nvs_save_settings(g_threshold, g_use_mph, g_club);
             Serial.println("[CAL] Threshold saved, exit");
             return;
@@ -133,27 +122,38 @@ static void calibration_loop()
 
 static void settings_loop()
 {
-    int item = 0;
-    ui_settings_draw(item, g_club, g_use_mph);
+    ui_settings_draw(g_club, g_use_mph);
 
     while (true) {
-        if (scroll_pressed()) {
-            item = (item + 1) % 3;
-            ui_settings_draw(item, g_club, g_use_mph);
-        }
-        if (select_pressed()) {
-            if (item == 0) {
-                g_use_mph = !g_use_mph;
-                Serial.printf("[SET] Units → %s\n", speed_unit(g_use_mph));
-                ui_settings_draw(item, g_club, g_use_mph);
-            } else if (item == 1) {
-                reset_stats(g_club, g_stats);
-                ui_settings_draw(item, g_club, g_use_mph, true);
-                delay(800);
-                ui_settings_draw(item, g_club, g_use_mph, false);
-            } else {
-                calibration_loop();
-                ui_settings_draw(item, g_club, g_use_mph);
+        int tx, ty;
+        if (ui_get_tap(&tx, &ty)) {
+            switch (ui_settings_hit(tx, ty)) {
+                case 0:  // Units
+                    g_use_mph = !g_use_mph;
+                    Serial.printf("[SET] Units → %s\n", speed_unit(g_use_mph));
+                    ui_settings_draw(g_club, g_use_mph);
+                    break;
+                case 1:  // Reset stats
+                    reset_stats(g_club, g_stats);
+                    ui_settings_draw(g_club, g_use_mph, true);
+                    delay(800);
+                    ui_settings_draw(g_club, g_use_mph, false);
+                    break;
+                case 2:  // Radar calibration
+                    calibration_loop();
+                    ui_settings_draw(g_club, g_use_mph);
+                    break;
+                case 3: {  // Touch calibration
+                    uint16_t tcal[5];
+                    display_touch_calibrate(tcal);
+                    nvs_save_touch_cal(tcal);
+                    ui_settings_draw(g_club, g_use_mph);
+                    break;
+                }
+                case 9:  // DONE / exit
+                    nvs_save_settings(g_threshold, g_use_mph, g_club);
+                    Serial.println("[SET] Exit");
+                    return;
             }
         }
         if (power_held(2000)) {
@@ -169,11 +169,9 @@ static void settings_loop()
 void setup()
 {
     Serial.begin(115200);
-    Serial.println("\n[OpenScope] v0.6 booting");
+    Serial.println("\n[OpenScope] v0.7 booting");
 
-    pinMode(BTN_SCROLL, INPUT_PULLUP);
-    pinMode(BTN_SELECT, INPUT_PULLUP);
-    pinMode(BTN_POWER,  INPUT_PULLUP);
+    pinMode(BTN_POWER, INPUT_PULLUP);
 
     // ADC: 12-bit, 11 dB attenuation → ~0–3.1 V input range
     // On newer ESP-IDF: replace ADC_11db with ADC_ATTEN_DB_12 if it fails.
@@ -184,6 +182,18 @@ void setup()
 
     nvs_load(g_threshold, g_use_mph, g_club, g_stats, NUM_CLUBS);
     display_init();
+
+    // Touch: apply stored calibration, or run the 4-corner calibration once.
+    uint16_t tcal[5];
+    if (nvs_load_touch_cal(tcal)) {
+        display_set_touch_cal(tcal);
+        Serial.println("[TOUCH] Calibration loaded");
+    } else {
+        Serial.println("[TOUCH] No calibration — running first-time setup");
+        display_touch_calibrate(tcal);
+        nvs_save_touch_cal(tcal);
+    }
+
     ui_splash(g_club, g_stats, g_use_mph);
 
     Serial.printf("[OpenScope] Club: %s  Units: %s  Threshold: %.1f  V-half: %.0f°  Top: %.0f°\n",
@@ -194,18 +204,22 @@ void setup()
 
 void loop()
 {
-    // ── Button handling ──────────────────────────────────────────────────────
-    if (scroll_pressed()) {
-        g_club = (g_club + 1) % NUM_CLUBS;
-        nvs_save_settings(g_threshold, g_use_mph, g_club);
-        Serial.printf("[BTN] Club → %s\n", CLUBS[g_club].name);
-        ui_splash(g_club, g_stats, g_use_mph);
-        return;
-    }
-    if (select_pressed()) {
-        settings_loop();
-        ui_splash(g_club, g_stats, g_use_mph);
-        return;
+    // ── Touch handling ───────────────────────────────────────────────────────
+    int tx, ty;
+    if (ui_get_tap(&tx, &ty)) {
+        int hit = ui_splash_hit(tx, ty);
+        if (hit == 1) {                       // tap club circle → next club
+            g_club = (g_club + 1) % NUM_CLUBS;
+            nvs_save_settings(g_threshold, g_use_mph, g_club);
+            Serial.printf("[TOUCH] Club → %s\n", CLUBS[g_club].name);
+            ui_splash(g_club, g_stats, g_use_mph);
+            return;
+        }
+        if (hit == 2) {                       // tap bottom bar → settings
+            settings_loop();
+            ui_splash(g_club, g_stats, g_use_mph);
+            return;
+        }
     }
     if (power_held(2000)) {
         go_to_sleep();
@@ -250,14 +264,11 @@ void loop()
               g_club, g_use_mph);
 
     // ── Hold result, remain responsive ───────────────────────────────────────
+    // Any tap dismisses early; otherwise auto-returns after 6 s.
     uint32_t t0 = millis();
     while (millis() - t0 < 6000) {
-        if (scroll_pressed()) {
-            g_club = (g_club + 1) % NUM_CLUBS;
-            nvs_save_settings(g_threshold, g_use_mph, g_club);
-            break;
-        }
-        if (select_pressed()) break;
+        int rx, ry;
+        if (ui_get_tap(&rx, &ry)) break;
         if (power_held(2000)) go_to_sleep();
         delay(20);
     }

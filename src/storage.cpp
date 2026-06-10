@@ -58,3 +58,23 @@ void reset_stats(int idx, ClubStats* stats)
     nvs_save_stats(idx, stats[idx]);
     Serial.printf("[NVS] Stats reset: club %d\n", idx);
 }
+
+// ─── Touch calibration ────────────────────────────────────────────────────────
+
+bool nvs_load_touch_cal(uint16_t cal[5])
+{
+    prefs.begin("openscope", false);
+    bool   ok  = prefs.getBool("tcal_ok", false);
+    size_t got = ok ? prefs.getBytes("tcal", cal, 5 * sizeof(uint16_t)) : 0;
+    prefs.end();
+    return ok && got == 5 * sizeof(uint16_t);
+}
+
+void nvs_save_touch_cal(const uint16_t cal[5])
+{
+    prefs.begin("openscope", false);
+    prefs.putBytes("tcal", cal, 5 * sizeof(uint16_t));
+    prefs.putBool("tcal_ok", true);
+    prefs.end();
+    Serial.println("[NVS] Touch calibration saved");
+}

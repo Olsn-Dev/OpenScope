@@ -15,7 +15,7 @@ Battery-powered, no phone required.
 - **Side angle** — L/R deviation in degrees (e.g. `R 2.3°` or `STRAIGHT`)
 - Carry & total distance — physics-corrected using actual launch angle
 - Smash factor
-- 3.5" color TFT display
+- 3.5" color **touch** TFT display (ILI9488 + XPT2046)
 - Per-club statistics (avg, best carry) stored in flash
 - Deep sleep with one-button wake
 - Calibration mode with live FFT spectrum
@@ -45,8 +45,8 @@ True ball speed:  k = F / cos(α),   v = k · 0.022384 km/h
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Hardware & wiring | 🟡 In progress (v0.6) |
-| 2 | Software & calibration | 🟡 In progress (v0.6) |
+| 1 | Hardware & wiring | 🟡 In progress (v0.7) |
+| 2 | Software & calibration | 🟡 In progress (v0.7) |
 | 3 | Physical prototyping | 🔲 Not started |
 | 4 | Housing & battery optimization | 🔲 Not started |
 | 5 | Testing & validation | 🔲 Not started |
@@ -123,13 +123,18 @@ Side view:
 
 ## Controls
 
-Three dedicated buttons:
+**Touch screen + one Power button.** All navigation is by touch; the only
+physical control is Power.
 
-| Button | GPIO | Normal mode | Calibration |
-|--------|------|-------------|-------------|
-| Scroll | 25 | Cycle clubs | Threshold +10 |
-| Select | 26 | Open settings | Threshold −10 |
-| Power | 27 | Hold 2 s → sleep | Hold 2 s → save + exit |
+| Where | Touch | Power |
+|-------|-------|-------|
+| Ready | Tap **club circle** → next club · tap **SETTINGS** bar | Hold 2 s → sleep |
+| Result | Tap **anywhere** → dismiss | Hold 2 s → sleep |
+| Settings | Tap a **row** · tap **DONE** → exit | Hold 2 s → exit |
+| Calibration | `[−10]` `[SAVE]` `[+10]` buttons | Hold 2 s → save + exit |
+
+> On first boot (or via Settings → **Touch Cal.**) the unit runs a quick
+> 4-corner touch calibration, stored in flash.
 
 ## Display Layout
 
@@ -155,17 +160,18 @@ The firmware has four screens:
 
 ### Settings screen
 
-Reached by pressing **Select** from the main screen.
+Reached by tapping the **SETTINGS** bar on the main screen.
 
 ```
 ┌─────────────────────────────────────────────┐
-│  Settings   scroll=next  select=choose  …   │
+│  Settings                      tap an item   │
 ├─────────────────────────────────────────────┤
-│► Units                               km/h   │
-│  Reset Stats                            7I  │
-│  Calibration                            ►   │
-│─────────────────────────────────────────────│
-│                  OpenScope v0.6             │
+│▌ Units                               km/h   │
+│▌ Reset Stats                            7I  │
+│▌ Radar Cal.                             ►   │
+│▌ Touch Cal.                             ►   │
+├─────────────────────────────────────────────┤
+│                    DONE                      │
 └─────────────────────────────────────────────┘
 ```
 
@@ -173,7 +179,8 @@ Reached by pressing **Select** from the main screen.
 |------|--------|
 | Units | Toggle km/h ↔ mph |
 | Reset Stats | Clears avg/best for the active club |
-| Calibration | Opens calibration screen |
+| Radar Cal. | Opens the detection-threshold calibration screen |
+| Touch Cal. | Re-runs the 4-corner touch calibration |
 
 ## Calibration
 
@@ -182,12 +189,11 @@ a real shot vs. background noise. It is saved to flash.
 
 ### Enter calibration
 
-From the main screen, press **Select** → scroll to **Calibration** →
-press **Select** again.
+From the main screen, tap **SETTINGS** → tap **Radar Cal.**
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  CALIBRATION MODE    scroll=+10  select=-10  power=save│
+│  CALIBRATION MODE              tap the buttons below  │
 ├──────────────────────────────────────────────────────┤
 │  [live FFT spectrum — teal bars below threshold,      │
 │   red bars above — yellow line = threshold]           │
@@ -195,19 +201,21 @@ press **Select** again.
 │ NOISE FLOOR   │ PEAK MAG      │ MAX SEEN             │
 │ 14.2          │ 14.2          │ 14.2                 │
 ├───────────────┴───────────────┴──────────────────────┤
-│ PEAK FREQ:  ---                                       │
-│ THRESHOLD: 80        SUGGESTED: 58  (noise x4)       │
-└──────────────────────────────────────────────────────┘
+│ PEAK 0 Hz = 0.0 km/h                                  │
+│ THRESHOLD 80         SUGGESTED 58                     │
+├───────────────┬───────────────┬──────────────────────┤
+│     −10       │     SAVE      │       +10            │
+└───────────────┴───────────────┴──────────────────────┘
 ```
 
 ### Steps
 
 1. Leave the device still for ~30 s. Note **NOISE FLOOR** (typically 8–20).
 2. Take a full practice swing. Note **MAX SEEN** (typically 200–600).
-3. Use **Scroll (+10)** / **Select (−10)** to move the yellow threshold
-   line between noise floor and MAX SEEN. The **SUGGESTED** value
-   (`noise × 4`) is a good starting point.
-4. Hold **Power 2 s** to save and return.
+3. Tap **`−10`** / **`+10`** to move the yellow threshold line between
+   noise floor and MAX SEEN. The **SUGGESTED** value (`noise × 4`) is a
+   good starting point.
+4. Tap **SAVE** (or hold **Power 2 s**) to save and return.
 
 | Measurement | Typical value |
 |-------------|--------------|

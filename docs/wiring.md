@@ -9,14 +9,15 @@ CDM324 L (ground, left V arm)  ──► LM358 op-amp 1 ──► GPIO34 (ADC1_C
 CDM324 R (ground, right V arm) ──► LM358 op-amp 2 ──► GPIO35 (ADC1_CH7)
 CDM324 T (top, 20° up)         ──► LM358 op-amp 3 ──► GPIO32 (ADC1_CH4)
                                                            │
-18650 battery ──► ESP32 board                              ├──► GPIO23/18/5/2/4 (SPI)
+18650 battery ──► ESP32 board                              ├──► GPIO23/18/19/5/2/4 (SPI)
                   (onboard regulator)                      │
-                                                           └──► ST7796 TFT display
+                                                           ├──► ILI9488 TFT display
+                                                           └──► XPT2046 touch (TOUCH_CS GPIO21)
 
-BTN_SCROLL ──► GPIO25 ──► GND
-BTN_SELECT ──► GPIO26 ──► GND
-BTN_POWER  ──► GPIO27 ──► GND
+BTN_POWER  ──► GPIO27 ──► GND   (only physical control)
 ```
+
+> All navigation is on the touch screen. The only physical button is Power.
 
 > Three radar channels require three preamp channels. Use **three LM358 ICs**
 > (one per radar) — each DIP-8 has two op-amps; use one per IC.
@@ -179,45 +180,54 @@ CDM324 IF ──┤├────────────┤├─────�
 
 ---
 
-## TFT Display (ST7796) → ESP32 SPI
+## TFT Display (ILI9488) + Touch (XPT2046) → ESP32 SPI
 
-| Display pin | ESP32 GPIO |
-|-------------|------------|
-| MOSI | 23 |
-| SCLK | 18 |
-| CS | 5 |
-| DC | 2 |
-| RST | 4 |
-| BL (backlight) | 3.3V (always on) |
-| VCC | 3.3V |
-| GND | GND |
+The display and the resistive touch controller share one SPI bus. They have
+separate chip-select lines but common MOSI / SCLK / MISO.
 
-MISO is not used — leave unconnected.
+| Module pin | ESP32 GPIO | Notes |
+|------------|------------|-------|
+| MOSI / SDI / T_DIN | 23 | shared |
+| SCLK / T_CLK | 18 | shared |
+| MISO / SDO / T_DO | 19 | shared — **required for touch** |
+| LCD_CS | 5 | display select |
+| T_CS | 21 | touch select (`TOUCH_CS`) |
+| DC / RS | 2 | |
+| RST | 4 | |
+| BL (backlight) | 3.3V (always on) | |
+| T_IRQ | — | leave unconnected (TFT_eSPI polls, no IRQ used) |
+| VCC | 3.3V | |
+| GND | GND | |
+
+> Unlike the old display-only wiring, **MISO must now be connected** — the
+> XPT2046 returns touch coordinates over it. On most of these 3.5" modules the
+> display SDO and the touch T_DO are the same physical net; wire it to GPIO19.
 
 ---
 
-## Control Buttons
+## Control — Power button + touch
 
-One leg to the GPIO, other leg to GND. No external resistors needed —
-the ESP32 uses internal pull-ups.
+Only one physical button remains. Everything else is on the touch screen.
 
 | Button | GPIO | Function |
 |--------|------|---------|
-| Scroll | GPIO25 | Cycle clubs / navigate / threshold +10 in calibration |
-| Select | GPIO26 | Open settings / confirm / threshold -10 in calibration |
 | Power  | GPIO27 | Hold 2 s → deep sleep; press to wake |
 
 > GPIO27 is RTC GPIO (RTC_GPIO17 internally) — required for deep sleep wake.
 > Do not move the Power button to a non-RTC pin.
+> One leg to GPIO27, the other to GND — internal pull-up, no resistor needed.
 
-**Button functions by screen:**
+**Touch actions by screen:**
 
-| Screen | Scroll | Select | Power (hold 2 s) |
-|--------|--------|--------|------------------|
-| Splash | Next club | Open settings | Deep sleep |
-| Result | Next club | Dismiss result | Deep sleep |
-| Settings | Next item | Activate item | Save + exit |
-| Calibration | Threshold +10 | Threshold -10 | Save + exit |
+| Screen | Touch targets | Power (hold 2 s) |
+|--------|---------------|------------------|
+| Splash | Tap club circle = next club · bottom bar = Settings | Deep sleep |
+| Result | Tap anywhere = dismiss | Deep sleep |
+| Settings | Tap a row (Units / Reset / Radar Cal. / Touch Cal.) · DONE bar = exit | Save + exit |
+| Calibration | `[-10]` `[SAVE]` `[+10]` buttons | Save + exit (fallback) |
+
+> **First boot / Touch Cal.:** if no touch calibration is stored, the unit runs
+> a 4-corner calibration once. Re-run it any time from Settings → Touch Cal.
 
 ---
 
