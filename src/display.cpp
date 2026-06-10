@@ -105,8 +105,8 @@ int ui_cal_hit(int x, int y)
 static void draw_button(int x, int y, int w, int h, const char* label,
                         uint16_t border, uint16_t text_col, bool filled = true)
 {
-    if (filled) tft.fillRect(x + 1, y + 1, w - 2, h - 2, COL_BTN_BG);
-    tft.drawRect(x, y, w, h, border);
+    if (filled) tft.fillRoundRect(x + 1, y + 1, w - 2, h - 2, BTN_RADIUS, COL_BTN_BG);
+    tft.drawRoundRect(x, y, w, h, BTN_RADIUS, border);
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(4); tft.setTextColor(text_col, filled ? COL_BTN_BG : TFT_BLACK);
     tft.drawString(label, x + w / 2, y + h / 2);
@@ -159,10 +159,11 @@ static void draw_club_tile(int col, int row, int club_idx, bool tap_hint = false
 {
     const int cx = col * COL_W + COL_W / 2;
     const int cy = row * ROW_H + ROW_H / 2;
-    tft.drawCircle(cx, cy, 42, TFT_CYAN);
+    tft.fillCircle(cx, cy, 43, COL_BTN_BG);
     tft.drawCircle(cx, cy, 43, TFT_CYAN);
+    tft.drawCircle(cx, cy, 44, TFT_CYAN);
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(4); tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextFont(4); tft.setTextColor(TFT_WHITE, COL_BTN_BG);
     tft.drawString(CLUBS[club_idx].abbr, cx, cy);
     if (tap_hint) {
         tft.setTextFont(1); tft.setTextColor(COL_UNIT, TFT_BLACK);
@@ -292,21 +293,21 @@ void ui_settings_draw(int club_idx, bool use_mph, bool reset_done)
     const char* labels[SET_N_ROWS] = { "Units", "Reset Stats", "Radar Cal.", "Touch Cal." };
     const char* values[SET_N_ROWS] = { unit_val, reset_val,     "\x10",      "\x10"       };
 
-    // Tappable item rows — each is a bordered button-style strip.
+    // Tappable item rows — rounded card strips with cyan accent stripe.
     for (int i = 0; i < SET_N_ROWS; i++) {
         const int y = SET_HDR_H + i * SET_ROW_H;
-        tft.fillRect(0, y + 2, SCR_W, SET_ROW_H - 4, COL_BTN_BG);
         tft.drawFastHLine(0, y, SCR_W, COL_DIV);
-        tft.fillRect(0, y + 2, 4, SET_ROW_H - 4, TFT_CYAN);   // accent stripe
+        tft.fillRoundRect(4, y + 4, SCR_W - 8, SET_ROW_H - 8, BTN_RADIUS / 2, COL_BTN_BG);
+        tft.fillRoundRect(4, y + 4, 6, SET_ROW_H - 8, BTN_RADIUS / 2, TFT_CYAN);  // accent
 
         tft.setTextDatum(ML_DATUM);
         tft.setTextFont(4); tft.setTextColor(TFT_WHITE, COL_BTN_BG);
-        tft.drawString(labels[i], 20, y + SET_ROW_H / 2);
+        tft.drawString(labels[i], 22, y + SET_ROW_H / 2);
 
         uint16_t vc = (i == 1 && reset_done) ? TFT_GREEN : TFT_CYAN;
         tft.setTextColor(vc, COL_BTN_BG);
         tft.setTextDatum(MR_DATUM);
-        tft.drawString(values[i], SCR_W - 20, y + SET_ROW_H / 2);
+        tft.drawString(values[i], SCR_W - 16, y + SET_ROW_H / 2);
     }
 
     // DONE bar — exit settings.
