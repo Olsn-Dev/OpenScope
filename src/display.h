@@ -55,8 +55,19 @@ int ui_history_hit(int x, int y);   // 99 = Back, 98 = Clear, -1 = none
 // Initialise the TFT hardware. Call once in setup().
 void display_init();
 
+// Boot splash — OpenScope wordmark, shown briefly while starting up.
+void display_splash();
+
 // Brief "Goodbye" message shown before deep sleep.
 void display_goodbye();
+
+// ── Touch press feedback ──
+// Briefly highlight the tapped control before acting on it, so every tap has
+// a visible response (resistive panels give no tactile confirmation).
+void ui_menu_flash(int row);                       // main-menu rows
+void ui_mode_flash(int row);                       // mode-select rows
+void ui_settings_flash(int row);                   // settings item rows
+void ui_pill_flash(bool large_layout, int club_idx); // club pill (either layout)
 
 // ── Advanced layout ──
 // Ready screen — top row dimmed, bottom row shows per-club stats, club pill +

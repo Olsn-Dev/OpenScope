@@ -7,8 +7,9 @@ in sync with the firmware automatically. The UI is fully touch-driven (LM1
 style): the only physical control is Power.
 
 Screens rendered (mirrors display.cpp):
-    Main Menu · Mode Select · Advanced layout · Large-Digit layout ·
-    Club Picker · Speed Training · Settings · Calibration
+    Boot Splash · Main Menu · Mode Select · Advanced layout · Large-Digit
+    layout · Club Picker · Shot History · Speed Training · Settings ·
+    Calibration
 
 Usage (from repo root):
     python tools/generate_mockup.py
@@ -69,6 +70,14 @@ PICK_HDR_H = cfg.get("PICK_HDR_H", 48)
 PICK_ROW_H = cfg.get("PICK_ROW_H", 52)
 PICK_ROWS  = (SCR_H - PICK_HDR_H) // PICK_ROW_H
 
+HIST_HDR_H = cfg.get("HIST_HDR_H", 48)
+HIST_COL_H = cfg.get("HIST_COL_H", 24)
+HIST_ROW_H = cfg.get("HIST_ROW_H", 34)
+HIST_ROWS  = (SCR_H - HIST_HDR_H - HIST_COL_H) // HIST_ROW_H
+
+FW_VERSION = (re.search(r'#define\s+FW_VERSION\s+"([^"]+)"',
+                        open(ROOT / "src" / "config.h").read()) or [None, "v0.9"])[1]
+
 # ─── Colour helpers ───────────────────────────────────────────────────────────
 
 def rgb565(c):
@@ -93,6 +102,7 @@ DIM       = rgb565(cfg["COL_DIM"])
 CAL_HDR   = rgb565(cfg["COL_CAL_HDR"])
 BTN_BG    = rgb565(cfg.get("COL_BTN_BG",  0x18E3))
 BTN_BRD   = rgb565(cfg.get("COL_BTN_BRD", 0x4208))
+TILE_BG   = rgb565(cfg.get("COL_TILE_BG", 0x0841))
 
 # Theme label colours (Black theme = white labels, Blue theme = cyan labels)
 LABEL_BLACK = rgb565(cfg.get("COL_LABEL_BLACK", 0xFFFF))
@@ -198,7 +208,9 @@ def draw_club_pill(draw, x, y, w, h, abbr, label_col, tap_hint=False):
         tc(draw, "TAP TO CHANGE", cx, y + h + 4, F_SMALL, UNIT_C)
 
 def session_nav(draw, hint, label_col):
-    by = BAR_Y + BAR_H // 2
+    by = BAR_Y + BAR_H // 2 + 1
+    # Filled "dock" strip, matching draw_session_nav in display.cpp.
+    draw.rectangle([0, BAR_Y + 1, SCR_W, SCR_H], fill=TILE_BG)
     draw.line([(0, BAR_Y), (SCR_W, BAR_Y)], fill=DIV)
     chevron(draw, 14, by, label_col)
     ml(draw, "Back", 34, by, F_HDR, label_col)
@@ -206,19 +218,42 @@ def session_nav(draw, hint, label_col):
     gear(draw, SCR_W - 24, by, label_col)
     mr(draw, "Menu", SCR_W - 42, by, F_HDR, label_col)
 
-def screen_header(draw, title, label_col, back=True):
-    draw.rectangle([0, 0, SCR_W, MENU_HDR_H], fill=NAVY)
+def screen_header(draw, title, label_col, back=True, h=None,
+                  right=None, right_col=CYAN):
+    """Dark card strip with a themed accent underline (display.cpp style)."""
+    if h is None: h = MENU_HDR_H
+    draw.rectangle([0, 0, SCR_W, h - 2], fill=TILE_BG)
+    draw.line([(0, h - 2), (SCR_W, h - 2)], fill=label_col)
+    draw.line([(0, h - 1), (SCR_W, h - 1)], fill=DIV)
+    cy = (h - 2) // 2
     if back:
-        chevron(draw, 14, MENU_HDR_H // 2, CYAN)
-        ml(draw, "Back", 34, MENU_HDR_H // 2, F_HDR, CYAN)
-    mc(draw, title, SCR_W // 2, MENU_HDR_H // 2, F_TITLE, label_col)
+        chevron(draw, 14, cy, label_col)
+        ml(draw, "Back", 34, cy, F_HDR, label_col)
+    if right:
+        mr(draw, right, SCR_W - 16, cy, F_HDR, right_col)
+    mc(draw, title, SCR_W // 2, cy, F_TITLE, WHITE)
 
 def menu_row(draw, i, label, accent):
-    y = MENU_HDR_H + i * MENU_ROW_H
-    h = MENU_ROW_H - MENU_GAP
+    y  = MENU_HDR_H + i * MENU_ROW_H
+    h  = MENU_ROW_H - MENU_GAP
+    cy = y + h // 2 + 2
     rounded_rect(draw, 8, y + 4, SCR_W - 16, h - 4, BTN_R, fill=BTN_BG)
     rounded_rect(draw, 8, y + 4, 6, h - 4, BTN_R, fill=accent)
-    ml(draw, label, 28, y + h // 2 + 2, F_TITLE, WHITE)
+    ml(draw, label, 28, cy, F_TITLE, WHITE)
+    # "›" affordance chevron on the right.
+    draw.line([(SCR_W-34, cy-8), (SCR_W-26, cy), (SCR_W-34, cy+8)],
+              fill=UNIT_C, width=2)
+
+# ─── Screen: Boot Splash ──────────────────────────────────────────────────────
+
+def screen_splash(label_col=LABEL_BLACK):
+    img = Image.new("RGB", (SCR_W, SCR_H), BG); d = ImageDraw.Draw(img)
+    mc(d, "OpenScope", SCR_W // 2, SCR_H // 2 - 30, load_font(44), WHITE)
+    d.line([(SCR_W//2 - 92, SCR_H//2 + 6), (SCR_W//2 + 92, SCR_H//2 + 6)],
+           fill=label_col)
+    tc(d, "GOLF LAUNCH MONITOR", SCR_W // 2, SCR_H // 2 + 20, F_HDR, UNIT_C)
+    tc(d, FW_VERSION, SCR_W // 2, SCR_H // 2 + 42, F_HDR, UNIT_C)
+    return img
 
 # ─── Screen: Main Menu ────────────────────────────────────────────────────────
 
@@ -226,8 +261,10 @@ def screen_menu(label_col=LABEL_BLACK):
     img = Image.new("RGB", (SCR_W, SCR_H), BG); d = ImageDraw.Draw(img)
     screen_header(d, "OpenScope", label_col, back=False)
     menu_row(d, 0, "Start Session", GREEN)
-    menu_row(d, 1, "Settings",      CYAN)
-    menu_row(d, 2, "Shut Down",     RED)
+    menu_row(d, 1, "Shot History",  YELLOW)
+    menu_row(d, 2, "Settings",      CYAN)
+    menu_row(d, 3, "Shut Down",     RED)
+    tc(d, FW_VERSION, SCR_W // 2, SCR_H - 12, F_SMALL, UNIT_C)
     return img
 
 # ─── Screen: Mode Select ──────────────────────────────────────────────────────
@@ -273,10 +310,7 @@ def screen_picker(label_col=LABEL_BLACK):
     img = Image.new("RGB", (SCR_W, SCR_H), BG); d = ImageDraw.Draw(img)
     active = 7                                   # 7-Iron is current
     scroll = max(0, min(active - PICK_ROWS // 2, len(CLUBS) - PICK_ROWS))
-    d.rectangle([0, 0, SCR_W, PICK_HDR_H], fill=NAVY)
-    chevron(d, 14, PICK_HDR_H // 2, CYAN)
-    ml(d, "Back", 34, PICK_HDR_H // 2, F_HDR, CYAN)
-    mc(d, "Select Club", SCR_W // 2, PICK_HDR_H // 2, F_TITLE, label_col)
+    screen_header(d, "Select Club", label_col, back=True, h=PICK_HDR_H)
     for r in range(PICK_ROWS):
         idx = scroll + r
         if idx >= len(CLUBS): break
@@ -304,21 +338,62 @@ def screen_speed(label_col=LABEL_BLACK):
     tc(d, "SWING SPEED", SCR_W // 2, 26, F_TITLE, label_col)
     mc(d, "118", SCR_W // 2, 140, F_HUGE, WHITE)
     tc(d, "km/h", SCR_W // 2, 198, F_TITLE, UNIT_C)
-    by = BAR_Y + BAR_H // 2
+    by = BAR_Y + BAR_H // 2 + 1
+    d.rectangle([0, BAR_Y + 1, SCR_W, SCR_H], fill=TILE_BG)
     d.line([(0, BAR_Y), (SCR_W, BAR_Y)], fill=DIV)
     chevron(d, 14, by, label_col)
     ml(d, "Back", 34, by, F_HDR, label_col)
     mc(d, "SWING TO MEASURE", SCR_W // 2, by, F_HDR, UNIT_C)
     return img
 
+# ─── Screen: Shot History ─────────────────────────────────────────────────────
+
+def screen_history(label_col=LABEL_BLACK):
+    img = Image.new("RGB", (SCR_W, SCR_H), BG); d = ImageDraw.Draw(img)
+    screen_header(d, "Shot History", label_col, back=True, h=HIST_HDR_H,
+                  right="Clear", right_col=RED)
+
+    # Column labels (positions mirror ui_history_draw in display.cpp).
+    C_BALL, C_SMASH, C_CARRY, C_TOTAL = 216, 300, 384, SCR_W - 12
+    cy = HIST_HDR_H + HIST_COL_H // 2
+    ml(d, "#",    16, cy, F_HDR, UNIT_C)
+    ml(d, "CLUB", 60, cy, F_HDR, UNIT_C)
+    mr(d, "BALL km/h",  C_BALL,  cy, F_HDR, UNIT_C)
+    mr(d, "SMASH",      C_SMASH, cy, F_HDR, UNIT_C)
+    mr(d, "CARRY m",    C_CARRY, cy, F_HDR, UNIT_C)
+    mr(d, "TOTAL m",    C_TOTAL, cy, F_HDR, UNIT_C)
+    d.line([(0, HIST_HDR_H + HIST_COL_H - 1), (SCR_W, HIST_HDR_H + HIST_COL_H - 1)],
+           fill=DIV)
+
+    # Sample shots, newest first (zebra striping like the firmware).
+    shots = [   # num, club, ball, smash, carry, total
+        (12, "7I", "172", "1.34", "139", "147"),
+        (11, "7I", "168", "1.31", "136", "144"),
+        (10, "7I", "175", "--",   "141", "150"),
+        ( 9, "D",  "228", "1.42", "204", "224"),
+        ( 8, "D",  "221", "1.39", "198", "218"),
+        ( 7, "PW", "138", "1.21", "104", "107"),
+        ( 6, "PW", "133", "1.24", "100", "103"),
+    ]
+    for r, (num, club, ball, smash, carry, total) in enumerate(shots[:HIST_ROWS]):
+        y  = HIST_HDR_H + HIST_COL_H + r * HIST_ROW_H
+        ry = y + HIST_ROW_H // 2
+        if r % 2 == 0:
+            d.rectangle([0, y, SCR_W, y + HIST_ROW_H - 1], fill=TILE_BG)
+        ml(d, str(num), 16, ry, F_HDR, UNIT_C)
+        ml(d, club,     60, ry, F_HDR, label_col)
+        mr(d, ball,  C_BALL,  ry, F_HDR, WHITE)
+        mr(d, smash, C_SMASH, ry, F_HDR, GREEN if smash != "--" else UNIT_C)
+        mr(d, carry, C_CARRY, ry, F_HDR, WHITE)
+        mr(d, total, C_TOTAL, ry, F_HDR, WHITE)
+    tc(d, "swipe up", 60, SCR_H - 16, F_HDR, UNIT_C)
+    return img
+
 # ─── Screen: Settings ─────────────────────────────────────────────────────────
 
 def screen_settings(label_col=LABEL_BLACK):
     img = Image.new("RGB", (SCR_W, SCR_H), BG); d = ImageDraw.Draw(img)
-    d.rectangle([0, 0, SCR_W, SET_HDR_H], fill=NAVY)
-    chevron(d, 14, SET_HDR_H // 2, CYAN)
-    ml(d, "Back", 34, SET_HDR_H // 2, F_HDR, CYAN)
-    mc(d, "Settings", SCR_W // 2, SET_HDR_H // 2, F_TITLE, label_col)
+    screen_header(d, "Settings", label_col, back=True, h=SET_HDR_H)
 
     labels = ["Units", "Color", "Layout", "Reset Stats", "Radar Cal.", "Touch Cal."]
     values = ["Kmh/m", "Black", "Advanced", "7I", "►", "►"]
@@ -390,11 +465,13 @@ GAP = 10
 
 def compose():
     panels = [
+        (screen_splash(),       "BOOT SPLASH"),
         (screen_menu(),         "MAIN MENU"),
         (screen_mode(),         "MODE SELECT"),
         (screen_advanced(),     "ADVANCED  (Black theme)"),
         (screen_large(),        "LARGE DIGIT  (Blue theme)"),
         (screen_picker(),       "CLUB PICKER"),
+        (screen_history(),      "SHOT HISTORY"),
         (screen_speed(),        "SPEED TRAINING"),
         (screen_settings(),     "SETTINGS"),
         (screen_calibration(),  "CALIBRATION"),
