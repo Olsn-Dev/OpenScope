@@ -171,14 +171,6 @@ def draw_tile(draw, col, row, label, number, unit, num_color, dimmed=False):
     tc(draw, number, cx, y0 + 38, F_NUM,   nc)
     tc(draw, unit,   cx, y0 + 98, F_UNIT,  uc)
 
-def draw_mini_tile(draw, col, label, value, val_color, dimmed=False):
-    cx = col * COL_W + COL_W // 2
-    y0 = ROW_H * 2
-    lc = DIM if dimmed else UNIT_C
-    vc = DIM if dimmed else val_color
-    tc(draw, label, cx, y0 + 8,  F_SMALL, lc)
-    tc(draw, value, cx, y0 + 20, F_LABEL, vc)
-
 def draw_club_tile(draw, col, row, abbr, tap_hint=False):
     cx = col * COL_W + COL_W // 2
     cy = row * ROW_H + ROW_H // 2
@@ -197,9 +189,9 @@ def screen_ready():
     grid_lines(draw)
 
     # Top row — dimmed (no shot yet)
-    draw_tile(draw, 0, 0, "Club",   "--", "km/h", WHITE, dimmed=True)
-    draw_tile(draw, 1, 0, "Ball",   "--", "km/h", WHITE, dimmed=True)
-    draw_tile(draw, 2, 0, "Launch", "--", "°",     WHITE, dimmed=True)
+    draw_tile(draw, 0, 0, "Club",  "--", "km/h", WHITE, dimmed=True)
+    draw_tile(draw, 1, 0, "Ball",  "--", "km/h", WHITE, dimmed=True)
+    draw_tile(draw, 2, 0, "Smash", "--", "",      WHITE, dimmed=True)
 
     # Bottom row — club statistics + tappable club selector
     draw_tile(draw, 0, 1, "Avg",  "182", "m",   WHITE)
@@ -215,27 +207,23 @@ def screen_ready():
 
 # ─── Screen 2 — Result ────────────────────────────────────────────────────────
 
-def screen_result(side_deg=2.3, side_dir="R"):
+def screen_result():
     img  = Image.new("RGB", (SCR_W, SCR_H), BG)
     draw = ImageDraw.Draw(img)
     grid_lines(draw)
 
-    draw_tile(draw, 0, 0, "Club",   "98",   "km/h", WHITE)
-    draw_tile(draw, 1, 0, "Ball",   "152",  "km/h", WHITE)
-    draw_tile(draw, 2, 0, "Launch", "19.4", "°",    GREEN)
-    draw_tile(draw, 0, 1, "Carry",  "187",  "m",    WHITE)
-    draw_tile(draw, 1, 1, "Total",  "209",  "m",    WHITE)
+    # Row 0 — club speed, ball speed, smash factor
+    draw_tile(draw, 0, 0, "Club",  "98",   "km/h", WHITE)
+    draw_tile(draw, 1, 0, "Ball",  "152",  "km/h", WHITE)
+    draw_tile(draw, 2, 0, "Smash", "1.55", "",     GREEN)
+    # Row 1 — carry, total, selected club
+    draw_tile(draw, 0, 1, "Carry", "187",  "m",    WHITE)
+    draw_tile(draw, 1, 1, "Total", "209",  "m",    WHITE)
     draw_club_tile(draw, 2, 1, "7I")
 
-    # Mini row — side angle (col 0) + smash (col 1) + tap hint (col 2)
-    side_str = "STRAIGHT" if abs(side_deg) < 0.5 else f"{side_dir} {abs(side_deg):.1f}°"
-    draw_mini_tile(draw, 0, "SIDE",  side_str, WHITE)
-    draw_mini_tile(draw, 1, "SMASH", "1.55",   UNIT_C)
-
-    # Col 2 of the mini row — tap-to-continue hint (any tap dismisses)
-    cx = 2 * COL_W + COL_W // 2
-    tc(draw, "TAP TO",   cx, ROW_H * 2 + 14, F_UNIT, UNIT_C)
-    tc(draw, "CONTINUE", cx, ROW_H * 2 + 32, F_UNIT, UNIT_C)
+    # Mini row — tap-to-continue hint (any tap dismisses)
+    tc(draw, "TAP TO CONTINUE", SCR_W // 2, ROW_H * 2 + MINI_ROW_H // 2,
+       F_UNIT, UNIT_C)
     return img
 
 # ─── Screen 3 — Settings ─────────────────────────────────────────────────────

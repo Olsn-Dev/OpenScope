@@ -2,19 +2,33 @@
 
 # OpenScope — DIY Golf Launch Monitor
 
-A radar-based golf launch monitor. Measures ball speed, club speed,
-**launch angle**, **side angle**, carry distance and total distance
-using three 24 GHz Doppler radar modules and an ESP32 microcontroller.
+A radar-based golf launch monitor built around a **single** 24 GHz Doppler
+radar module and an ESP32, modelled on the commercial single-Doppler
+[Shot Scope LM1](https://shotscope.com/). Measures ball speed, club speed
+and smash factor directly, and estimates carry and total distance.
 Battery-powered, no phone required.
 
-## Features
+## What it measures (and what it can't)
 
-- Ball speed (km/h or mph)
-- Club head speed
-- **Launch angle** — measured from ground/top radar Doppler ratio
-- **Side angle** — L/R deviation in degrees (e.g. `R 2.3°` or `STRAIGHT`)
-- Carry & total distance — physics-corrected using actual launch angle
-- Smash factor
+A single Doppler sensor sees only speed along its line of sight. That is
+enough for the core launch-monitor metrics, but **not** for launch angle,
+spin, or shot direction — those need extra sensors. OpenScope is honest
+about the difference:
+
+| Metric | Source |
+|--------|--------|
+| Ball speed | **Measured** — post-impact Doppler peak |
+| Club head speed | **Measured** — pre-impact clubhead Doppler peak |
+| Smash factor | **Measured** — ball speed ÷ club speed |
+| Carry distance | **Modeled** — from ball speed + per-club ballistic factor |
+| Total distance | **Modeled** — carry + per-club rollout factor |
+| Launch angle | **Not available** — needs a second/elevated sensor |
+| Spin (back/side) | **Not available** — out of reach for plain Doppler |
+| Side angle / dispersion | **Not available** — needs ≥2 sensors |
+
+Other features:
+
+- Units in km/h · m or mph · yds
 - 3.5" color **touch** TFT display (ILI9488 + XPT2046)
 - Per-club statistics (avg, best carry) stored in flash
 - Deep sleep with one-button wake
@@ -22,23 +36,27 @@ Battery-powered, no phone required.
 
 ## Technology
 
-Three **CDM324 24 GHz K-band Doppler radars** feed into an LM358
-preamplifier. The ESP32 runs a 1024-point FFT on all three channels
-simultaneously and solves for side angle, launch angle and true ball
-speed using the 3D Doppler equations:
+One **CDM324 24 GHz K-band Doppler radar** feeds into an LM358
+preamplifier. The ESP32 samples the IF signal at 40 kHz and runs a
+1024-point Hamming-windowed FFT (~25 ms window). Within that window the
+spectrum can hold two peaks — the slower **clubhead** (pre-impact) and the
+faster **ball** (post-impact):
 
 ```
-Radar L & R (ground, 90° V-formation, 45° per arm):
-  f_L = k·cos(α)·cos(β − 45°)
-  f_R = k·cos(α)·cos(β + 45°)
+CDM324 emits a continuous 24.125 GHz tone. A moving object Doppler-shifts
+the reflection:
 
-  Side angle β:  f_L/f_R = cos(β−45°)/cos(β+45°)  → binary search
+  f_d = 2 · v · f_c / c
+  v [km/h] = f_d [Hz] × 0.022384
 
-Radar T (top, tilted 20° upward):
-  F = (f_L + f_R) / (2·cos(β)·cos(45°))    [horizontal speed proxy]
-  tan(α) = (f_T/F − cos(β)·cos(20°)) / sin(20°)   → launch angle α
+The unit sits in line with the shot, so the radar sees the true
+line-of-sight speed — no angle correction is needed:
 
-True ball speed:  k = F / cos(α),   v = k · 0.022384 km/h
+  ball speed  = (higher peak) × 0.022384 km/h
+  club speed  = (lower  peak) × 0.022384 km/h
+  smash       = ball speed ÷ club speed
+  carry       = ball speed × club.carry_f      (modeled)
+  total       = carry × (1 + club.roll_f)      (modeled)
 ```
 
 ## Project Phases
@@ -56,10 +74,17 @@ True ball speed:  k = F / cos(α),   v = k · 0.022384 km/h
 ```
 golf-launch-monitor/
 ├── src/
-│   └── main.cpp          # ESP32 firmware (PlatformIO)
+│   ├── config.h          # pins, FFT/Doppler constants, layout
+│   ├── radar.cpp/.h      # ADC sampling, FFT, peak detection
+│   ├── clubs.cpp/.h      # club table + per-club stats
+│   ├── display.cpp/.h    # all TFT drawing + touch hit-testing
+│   ├── storage.cpp/.h    # NVS persistence
+│   └── main.cpp          # state, buttons, sleep, main loop
+├── test/
+│   └── test_speed_from_fft/  # native smoke test (pio test -e native)
 ├── docs/
 │   ├── bom.md            # Bill of materials with part numbers
-│   ├── wiring.md         # Wiring diagram, radar mounting angles
+│   ├── wiring.md         # Wiring diagram, radar placement
 │   └── openscope-ui.png  # UI mockup
 ├── platformio.ini        # PlatformIO build configuration
 └── README.md
@@ -69,57 +94,33 @@ golf-launch-monitor/
 
 1. Order components — see [docs/bom.md](docs/bom.md)
 2. Wire up the circuit — see [docs/wiring.md](docs/wiring.md)
-3. Mount the radars at the correct angles (see below)
+3. Place the unit ~1.4 m behind the ball, facing the target (see below)
 4. Install [PlatformIO](https://platformio.org/)
 5. Clone this repo and open in VS Code
 6. Build & upload: `pio run --target upload`
 7. Calibrate — see below
 
-## Radar Mounting
+## Radar Placement
 
-Place the entire unit **behind the golfer**, ~0.5–1 m back and slightly
-to the side — the same setup as commercial systems like Trackman.
-The ball flies *away* from the unit; Doppler works identically.
+Place the unit on the ground **~1.4 m (4–5 ft) behind the ball**, in line
+with the hitting direction, with the sensor/screen facing the target —
+the same geometry the Shot Scope LM1 uses. The ball flies *away* from the
+unit; Doppler measures a receding object identically to an approaching one.
 
 ```
 Top view:
 
- [Unit]  ←  0.5–1 m  →  [Golfer]  →  ●  →  →  →  target
-              behind                  ball
+ [Unit] ──── ~1.4 m ────► ●  →  →  →  target
+  (on ground,            ball
+   facing target)
 ```
 
-### Ground radars — V-formation (Radar L & R)
+- One CDM324 module, flat on the ground, boresight pointing at the target.
+- Aim it down the intended shot line through the ball.
+- Keep it static — vibration adds noise.
 
-```
-Top view (looking down):
-
-            ↑  target / ball flight
-
-            /\   ← 90° at the vertex
-           /  \
-          / 45°\ 45°
-        [L]    [R]
-       GPIO34  GPIO35
-
-V-tip points toward target. Unit placed 0.5–1 m behind golfer.
-```
-
-- Mount both flat on the ground, each arm **45° from the shot line**.
-- Aim the V-tip toward the ball impact point.
-- Place **0.5–1 m behind the golfer**, slightly to the side of the swing path.
-
-### Top radar — launch angle (Radar T)
-
-```
-Side view:
-
-  [Unit]         [Golfer]    ●  →  ↗  Ball trajectory
-  0.5–1 m back              tee  /
-  Radar T ──────────────────────►  20° above horizontal (GPIO32)
-```
-
-- Mount tilted **20° upward**. Use a printed wedge or protractor.
-- If you use a different angle, update `RADAR_T_ANGLE_DEG` in `src/config.h`.
+> **Speed-training tip:** to read swing speed alone, place the unit ~2.1 m
+> behind the golfer instead.
 
 ## Controls
 
@@ -144,19 +145,22 @@ The firmware has four screens:
 
 ```
 ┌──────────┬──────────┬──────────┐
-│  CLUB    │  BALL    │  LAUNCH  │
-│  98      │  152     │  19.4    │
-│  km/h    │  km/h    │  °       │
+│  CLUB    │  BALL    │  SMASH   │
+│  98      │  152     │  1.55    │
+│  km/h    │  km/h    │          │
 ├──────────┼──────────┼──────────┤
 │  CARRY   │  TOTAL   │   (7I)   │
 │  187     │  209     │          │
 │  m       │  m       │          │
 └──────────┴──────────┴──────────┘
- R 2.3°                 smash 1.55
+          TAP TO CONTINUE
 ```
 
-- **Launch** tile turns green when a valid angle is computed; `--` (dimmed) if unavailable.
-- **Side angle** shown bottom-left: `R 2.3°`, `L 1.1°`, or `STRAIGHT` (< 0.5°).
+The five tiles are the five single-Doppler metrics: **club speed**, **ball
+speed**, **smash factor** (measured) plus **carry** and **total** (modeled).
+
+- **Smash** tile turns green when a club peak was found; `--` (dimmed) if only
+  the ball was detected, in which case Club and Smash both read `--`.
 
 ### Settings screen
 
@@ -228,24 +232,19 @@ From the main screen, tap **SETTINGS** → tap **Radar Cal.**
 
 ## How it works
 
-The CDM324 emits a continuous 24.125 GHz signal. Moving objects
-Doppler-shift the reflected signal:
+The ESP32 samples the radar IF at 40 kHz and runs a 1024-point Hamming FFT
+(~25 ms window). Within each frame up to two peaks are searched, at least
+`MIN_PEAK_SEP_HZ` apart: if their ratio looks like a plausible ball/club
+pair, the **lower** frequency is the clubhead and the **higher** is the
+ball; otherwise only ball speed is reported. Parabolic interpolation gives
+sub-bin frequency accuracy. Each peak is converted to speed with
+`HZ_TO_KMH`; smash is the ratio, and carry/total are modeled per club.
 
-```
-f_d = 2 × v × f_c / c
-v [km/h] = f_d [Hz] × 0.022384
-```
-
-The ESP32 samples both radar channels simultaneously at 40 kHz and runs
-a 1024-point FFT (~25 ms window). Two peaks per frame are searched —
-the lower frequency is club head speed, the higher is ball speed.
-
-**Side angle** is computed from the L/R frequency ratio (independent of
-speed and launch angle) via a 40-iteration binary search. **Launch angle**
-is then solved directly using the three-radar 3D formula — no binary
-search needed. Ball speed `k` is fully corrected for both angles, and
-carry is scaled using the trajectory shape (`sin(2α)`) relative to each
-club's typical launch angle.
+Because the unit is aligned with the shot line, the radar reads true
+line-of-sight speed — there is no V-formation, no triangulation, and no
+angle correction. See [the source](src/radar.cpp) for the signal chain and
+[`test/`](test/) for a host-side smoke test of the speed-from-FFT path
+(`pio test -e native`).
 
 ## UI Mockup
 
