@@ -2,12 +2,12 @@
 
 // ─── Pins ─────────────────────────────────────────────────────────────────────
 
-// 3-radar layout:
-//   Radar L & R — ground level, V-formation (see RADAR_V_HALF_DEG below)
-//   Radar T     — mounted on top, tilted upward for launch angle
-#define RADAR_ADC_PIN_L  34   // Radar L — left V arm  (ADC1_CH6)
-#define RADAR_ADC_PIN_R  35   // Radar R — right V arm (ADC1_CH7)
-#define RADAR_ADC_PIN_T  32   // Radar T — top, tilted (ADC1_CH4)
+// Single-radar layout:
+//   One CDM324 Doppler module on the ground, ~1.4 m behind the ball, in line
+//   with the hitting direction and facing the target (same geometry as the
+//   Shot Scope LM1). The ball recedes from the unit; Doppler measures receding
+//   speed identically to approaching speed.
+#define RADAR_ADC_PIN    34   // CDM324 IF → LM358 preamp → ADC1_CH6
 #define BTN_POWER        27   // Power (RTC GPIO17 — supports ext0 wake)
 
 // All other navigation is via the touch panel (XPT2046, 4-wire resistive).
@@ -24,20 +24,6 @@
 #define HZ_TO_KMH  0.022384f   // km/h per Doppler Hz
 #define HZ_TO_MPH  0.013912f
 
-// ─── Radar geometry ───────────────────────────────────────────────────────────
-// RADAR_V_HALF_DEG: angle between each V arm and the shot direction (top view).
-//   45° per arm (90° total V at vertex) is optimal: maximises sin(V)·cos(V),
-//   giving the best balance of CDM324 signal strength and angular sensitivity.
-//   Valid side-angle range: |β| < (90° − 45°) = ±44°.
-#define RADAR_V_HALF_DEG   45.0f   // degrees — 90° total V at vertex (optimal)
-#define RADAR_T_ANGLE_DEG  20.0f   // top radar: degrees above horizontal
-#define DEG_TO_RAD         0.017453293f
-
-// ─── Launch and side angle limits ─────────────────────────────────────────────
-#define LAUNCH_MIN_DEG     2.0f    // below this → no launch detection
-#define LAUNCH_MAX_DEG     55.0f   // above this → no launch detection
-#define SIDE_MAX_DEG       10.0f   // |side angle| limit in degrees
-
 // ─── Detection ────────────────────────────────────────────────────────────────
 
 #define MIN_DETECT_HZ           1800    // ~40 km/h
@@ -53,7 +39,7 @@
 #define SCR_H      320
 #define COL_W      (SCR_W / 3)
 #define ROW_H      130   // main tile row height (2×130 + 60 = 320)
-#define MINI_ROW_H  60   // mini row at bottom for side angle + smash
+#define MINI_ROW_H  60   // mini row at bottom (tap-to-continue hint)
 
 // RGB565 colour palette
 #define COL_DIV      0x2945   // dark teal — grid divider lines

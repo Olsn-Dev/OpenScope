@@ -8,7 +8,9 @@ struct Club {
     const char* abbr;
     float carry_f;      // carry [m] = ball_kmh × carry_f  (at typical launch)
     float roll_f;       // roll  [m] = carry × roll_f
-    float typ_launch;   // typical launch angle [°] for this club
+    float typ_launch;   // typical launch angle [°] — informational only; the
+                        // single Doppler can't measure launch, it's baked into
+                        // carry_f as the assumed launch for this club.
 };
 
 struct ClubStats {

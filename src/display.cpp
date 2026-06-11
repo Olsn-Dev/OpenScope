@@ -141,20 +141,6 @@ static void draw_tile(int col, int row,
     tft.drawString(unit, cx, y0 + 118);
 }
 
-static void draw_mini_tile(int col, const char* label, const char* value,
-                           uint16_t val_color, bool dimmed = false)
-{
-    const int cx = col * COL_W + COL_W / 2;
-    const int y0 = ROW_H * 2;
-    uint16_t lc = dimmed ? COL_DIM : COL_UNIT;
-    uint16_t vc = dimmed ? COL_DIM : val_color;
-    tft.setTextDatum(TC_DATUM);
-    tft.setTextFont(1); tft.setTextColor(lc, TFT_BLACK);
-    tft.drawString(label, cx, y0 + 8);
-    tft.setTextFont(4); tft.setTextColor(vc, TFT_BLACK);
-    tft.drawString(value, cx, y0 + 20);
-}
-
 static void draw_club_tile(int col, int row, int club_idx, bool tap_hint = false)
 {
     const int cx = col * COL_W + COL_W / 2;
@@ -175,19 +161,20 @@ static void draw_club_tile(int col, int row, int club_idx, bool tap_hint = false
 //
 // Tile layout (all screens):
 //   ┌──────────┬──────────┬──────────┐
-//   │  CLUB    │  BALL    │  LAUNCH  │  ← row 0
+//   │  CLUB    │  BALL    │  SMASH   │  ← row 0
 //   ├──────────┼──────────┼──────────┤
 //   │  CARRY   │  TOTAL   │  [Club]  │  ← row 1
 //   └──────────┴──────────┴──────────┘
+//   (mini row below: tap-to-continue hint)
 
 void ui_splash(int club_idx, const ClubStats* stats, bool use_mph)
 {
     tft.fillScreen(TFT_BLACK);
     draw_grid_lines();
 
-    draw_tile(0, 0, "Club",   "--", speed_unit(use_mph), TFT_WHITE, true);
-    draw_tile(1, 0, "Ball",   "--", speed_unit(use_mph), TFT_WHITE, true);
-    draw_tile(2, 0, "Launch", "--", "\xb0",               TFT_WHITE, true);
+    draw_tile(0, 0, "Club",  "--", speed_unit(use_mph), TFT_WHITE, true);
+    draw_tile(1, 0, "Ball",  "--", speed_unit(use_mph), TFT_WHITE, true);
+    draw_tile(2, 0, "Smash", "--", "",                  TFT_WHITE, true);
 
     const ClubStats& s = stats[club_idx];
     char avg[8], best[8];
@@ -210,9 +197,8 @@ void ui_splash(int club_idx, const ClubStats* stats, bool use_mph)
     draw_button(0, BAR_Y, SCR_W, BAR_H, "SETTINGS", COL_BTN_BRD, TFT_CYAN);
 }
 
-void ui_result(float ball_kmh, float club_kmh,
+void ui_result(float ball_kmh, float club_kmh, float smash,
                float carry_m,  float total_m,
-               float launch_deg, float side_deg,
                int club_idx, bool use_mph)
 {
     tft.fillScreen(TFT_BLACK);
@@ -220,6 +206,7 @@ void ui_result(float ball_kmh, float club_kmh,
 
     char buf[12];
 
+    // Row 0 — club speed, ball speed, smash factor.
     if (club_kmh > 0.0f) {
         snprintf(buf, sizeof(buf), "%.0f", disp_speed(club_kmh, use_mph));
         draw_tile(0, 0, "Club", buf, speed_unit(use_mph), TFT_WHITE);
@@ -230,13 +217,14 @@ void ui_result(float ball_kmh, float club_kmh,
     snprintf(buf, sizeof(buf), "%.0f", disp_speed(ball_kmh, use_mph));
     draw_tile(1, 0, "Ball", buf, speed_unit(use_mph), TFT_WHITE);
 
-    if (launch_deg > 0.0f) {
-        snprintf(buf, sizeof(buf), "%.1f", launch_deg);
-        draw_tile(2, 0, "Launch", buf, "\xb0", TFT_GREEN);
+    if (smash > 0.0f) {
+        snprintf(buf, sizeof(buf), "%.2f", smash);
+        draw_tile(2, 0, "Smash", buf, "", TFT_GREEN);
     } else {
-        draw_tile(2, 0, "Launch", "--", "\xb0", TFT_WHITE, true);
+        draw_tile(2, 0, "Smash", "--", "", TFT_WHITE, true);
     }
 
+    // Row 1 — carry, total, selected club.
     snprintf(buf, sizeof(buf), "%.0f", disp_dist(carry_m, use_mph));
     draw_tile(0, 1, "Carry", buf, dist_unit(use_mph), TFT_WHITE);
 
@@ -245,29 +233,10 @@ void ui_result(float ball_kmh, float club_kmh,
 
     draw_club_tile(2, 1, club_idx);
 
-    // ── Mini row: side angle (col 0) + smash (col 1), col 2 empty ───────────
-    char side_buf[16];
-    if (fabsf(side_deg) >= 0.5f)
-        snprintf(side_buf, sizeof(side_buf), "%s %.1f\xb0",
-                 side_deg >= 0.0f ? "R" : "L", fabsf(side_deg));
-    else
-        snprintf(side_buf, sizeof(side_buf), "STRAIGHT");
-    draw_mini_tile(0, "SIDE", side_buf, TFT_WHITE);
-
-    if (club_kmh > 0.0f) {
-        char sm[8];
-        snprintf(sm, sizeof(sm), "%.2f", ball_kmh / club_kmh);
-        draw_mini_tile(1, "SMASH", sm, COL_UNIT);
-    } else {
-        draw_mini_tile(1, "SMASH", "--", COL_UNIT, true);
-    }
-
-    // Col 2 of the mini row — tap-to-continue hint (any tap dismisses).
-    const int cx = 2 * COL_W + COL_W / 2;
+    // Mini row — tap-to-continue hint (any tap dismisses).
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
-    tft.drawString("TAP TO", cx, ROW_H * 2 + 22);
-    tft.drawString("CONTINUE", cx, ROW_H * 2 + 40);
+    tft.drawString("TAP TO CONTINUE", SCR_W / 2, ROW_H * 2 + MINI_ROW_H / 2);
 }
 
 // ─── Settings screen ──────────────────────────────────────────────────────────

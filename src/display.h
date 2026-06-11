@@ -39,11 +39,11 @@ void display_goodbye();
 void ui_splash(int club_idx, const ClubStats* stats, bool use_mph);
 
 // Result screen — all tiles filled with shot data.
-//   launch_deg < 0  →  launch tile shows "--" (dimmed)
-//   side_deg: positive = right, negative = left; shown as "R 2.3°" / "L 2.3°"
-void ui_result(float ball_kmh, float club_kmh,
+// Shows the five single-Doppler metrics: club speed, ball speed, smash factor,
+// carry and total distance.
+//   smash <= 0  →  club not detected; club + smash tiles show "--" (dimmed)
+void ui_result(float ball_kmh, float club_kmh, float smash,
                float carry_m,  float total_m,
-               float launch_deg, float side_deg,
                int club_idx, bool use_mph);
 
 // Settings menu — touch rows, no highlighted selection.
