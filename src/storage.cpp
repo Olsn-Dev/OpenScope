@@ -65,6 +65,52 @@ void reset_stats(int idx, ClubStats* stats)
     Serial.printf("[NVS] Stats reset: club %d\n", idx);
 }
 
+// ─── Shot history ─────────────────────────────────────────────────────────────
+// The whole log is one blob keyed by record size, so a future ShotRecord layout
+// change silently discards an old-format log instead of misreading it.
+
+static void save_history(const ShotRecord* shots, int count)
+{
+    prefs.begin("openscope", false);
+    prefs.putUInt("hist_n", (uint32_t)count);
+    if (count > 0) prefs.putBytes("hist", shots, count * sizeof(ShotRecord));
+    prefs.end();
+}
+
+void nvs_load_history(ShotRecord* shots, int& count)
+{
+    prefs.begin("openscope", false);
+    count = (int)prefs.getUInt("hist_n", 0);
+    if (count < 0 || count > HISTORY_MAX) count = 0;
+    if (count > 0) {
+        size_t want = count * sizeof(ShotRecord);
+        size_t got  = prefs.getBytes("hist", shots, want);
+        if (got != want) count = 0;
+    }
+    prefs.end();
+}
+
+void record_shot(const ShotRecord& rec, ShotRecord* shots, int& count)
+{
+    if (count >= HISTORY_MAX) {
+        memmove(shots, shots + 1, (HISTORY_MAX - 1) * sizeof(ShotRecord));
+        count = HISTORY_MAX - 1;
+    }
+    shots[count++] = rec;
+    save_history(shots, count);
+}
+
+void clear_history(ShotRecord* shots, int& count)
+{
+    (void)shots;
+    count = 0;
+    prefs.begin("openscope", false);
+    prefs.remove("hist");
+    prefs.putUInt("hist_n", 0);
+    prefs.end();
+    Serial.println("[NVS] Shot history cleared");
+}
+
 // ─── Touch calibration ────────────────────────────────────────────────────────
 
 bool nvs_load_touch_cal(uint16_t cal[5])

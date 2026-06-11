@@ -23,6 +23,30 @@ void record_carry(int club_idx, float carry, ClubStats* stats);
 // Zero out stats for club idx and persist.
 void reset_stats(int idx, ClubStats* stats);
 
+// ─── Shot history ─────────────────────────────────────────────────────────────
+// A ring of the most recent HISTORY_MAX shots across all clubs, persisted as a
+// single NVS blob. Kept oldest→newest in RAM; the UI renders it newest-first.
+
+#define HISTORY_MAX 50
+
+struct ShotRecord {
+    uint8_t club;       // index into CLUBS[]
+    float   ball_kmh;
+    float   club_kmh;   // 0 = club head not detected (smash unavailable)
+    float   carry_m;
+    float   total_m;
+};
+
+// Load the persisted shot log into shots[HISTORY_MAX]; sets count (0 if none
+// stored, or if the stored blob doesn't match the current record size).
+void nvs_load_history(ShotRecord* shots, int& count);
+
+// Append a shot (dropping the oldest once full) and persist the log.
+void record_shot(const ShotRecord& rec, ShotRecord* shots, int& count);
+
+// Erase the shot log (RAM + NVS).
+void clear_history(ShotRecord* shots, int& count);
+
 // ─── Touch calibration (XPT2046) ──────────────────────────────────────────────
 
 // Load the 5-value TFT_eSPI touch calibration blob.

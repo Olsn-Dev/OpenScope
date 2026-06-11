@@ -70,7 +70,8 @@ enum UiMetric {
 };
 
 // Session mode chosen from the mode-select screen. On Course currently behaves
-// like Practice (no per-shot session log yet); Speed only shows swing speed.
+// like Practice (both feed the shared shot-history log); Speed only shows
+// swing speed and is not logged (no club context).
 enum SessionMode { MODE_PRACTICE = 0, MODE_ONCOURSE, MODE_SPEED };
 
 // Touch gestures recognised by ui_get_gesture().
@@ -116,8 +117,9 @@ enum UiGesture {
 #define GEAR_X       (SCR_W - GEAR_W)
 
 // Full-width list rows used by the main menu and mode-select screens.
+// 56 + 4×64 = 312 ≤ 320 — four rows fit since Shot History joined the menu.
 #define MENU_HDR_H    56                 // title bar height
-#define MENU_ROW_H    72                 // big finger-friendly rows
+#define MENU_ROW_H    64                 // big finger-friendly rows
 #define MENU_ROW_GAP   8
 
 // Club picker — a vertical scrollable list.
@@ -131,6 +133,13 @@ enum UiGesture {
 #define SET_HDR_H    48                  // header height (holds back chevron)
 #define SET_ROW_H    45                  // height of each tappable item row
 #define SET_N_ROWS    6
+
+// Shot history — header bar, a column-label strip, then list rows.
+// Rows are display-only (not tappable), so they can be tighter than 44 px.
+#define HIST_HDR_H   48                  // header (Back / title / Clear)
+#define HIST_COL_H   24                  // column-label strip below the header
+#define HIST_ROW_H   34
+#define HIST_ROWS    ((SCR_H - HIST_HDR_H - HIST_COL_H) / HIST_ROW_H)  // 7
 
 // Calibration bottom bar holds three buttons: [-10] [SAVE] [+10],
 // each one COL_W wide at y = BAR_Y.

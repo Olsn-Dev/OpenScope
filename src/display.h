@@ -1,6 +1,7 @@
 #pragma once
 #include "config.h"
 #include "clubs.h"
+#include "storage.h"   // ShotRecord for the history screen
 
 // ─── Unit conversion helpers ──────────────────────────────────────────────────
 
@@ -44,9 +45,10 @@ int ui_large_hit(int x, int y);
 int ui_result_hit(int x, int y);    // 1 = dismiss, 0 = none (any tap dismisses)
 int ui_settings_hit(int x, int y);  // 0..5 = item rows, 9 = Back/exit, -1 = none
 int ui_cal_hit(int x, int y);       // 1 = -10, 2 = save+exit, 3 = +10, 0 = none
-int ui_menu_hit(int x, int y);      // 0 Start, 1 Settings, 2 Shut Down, -1 none
+int ui_menu_hit(int x, int y);      // 0 Start, 1 History, 2 Settings, 3 Shut Down
 int ui_mode_hit(int x, int y);      // 0 Practice, 1 OnCourse, 2 Speed, 3 Back
 int ui_picker_hit(int x, int y, int scroll);  // club idx, 99 = Back, -1 = none
+int ui_history_hit(int x, int y);   // 99 = Back, 98 = Clear, -1 = none
 
 // ─── Screens ──────────────────────────────────────────────────────────────────
 
@@ -84,6 +86,11 @@ void ui_speed(float swing_kmh, bool use_mph, bool have);
 void ui_menu_draw();
 void ui_mode_draw();
 void ui_picker_draw(int club_idx, int scroll);   // scroll = first visible club
+
+// Shot history — newest-first list of the persisted shot log. `scroll` is the
+// newest-first index of the first visible row; the list pages by swipe ↕.
+void ui_history_draw(const ShotRecord* shots, int count, int scroll,
+                     bool use_mph);
 
 // Settings menu — six tappable rows (Units, Color, Layout, Reset, Radar Cal,
 // Touch Cal). reset_done = true briefly shows "Done!" on the Reset row.

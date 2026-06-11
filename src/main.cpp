@@ -11,7 +11,8 @@
 //
 // UI model (LM1-style, fully touch-driven — only Power is a physical button):
 //   Main menu ──► Mode select ──► Session (Advanced / Large Digit)
-//                            └──► Speed Training
+//             │              └──► Speed Training
+//             └──► Shot History (last 50 shots, persisted in NVS)
 //   • Swipe ↔ toggles Advanced ⇄ Large Digit; swipe ↕ cycles the focused
 //     metric in Large Digit.
 //   • Tap the club pill to open the scrollable club picker.
@@ -28,7 +29,9 @@
 
 // ─── Global state ─────────────────────────────────────────────────────────────
 
-static ClubStats g_stats[NUM_CLUBS];
+static ClubStats  g_stats[NUM_CLUBS];
+static ShotRecord g_hist[HISTORY_MAX];
+static int        g_hist_count = 0;
 static int       g_club       = 0;
 static float     g_threshold  = PEAK_THRESHOLD_DEFAULT;
 static bool      g_use_mph    = false;
@@ -232,6 +235,44 @@ static void club_picker()
     }
 }
 
+// ─── Shot history loop ────────────────────────────────────────────────────────
+// Newest-first table of the persisted shot log. Pages by swipe ↕ like the club
+// picker; Back via header chevron / left-edge swipe; Clear erases the log.
+
+static void history_loop()
+{
+    int scroll = 0;
+    ui_history_draw(g_hist, g_hist_count, scroll, g_use_mph);
+
+    while (true) {
+        const int max_scroll = max(0, g_hist_count - HIST_ROWS);
+        int gx, gy;
+        UiGesture g = ui_get_gesture(&gx, &gy);
+
+        if (g == GES_SWIPE_R && gx < EDGE_BACK_X) return;   // edge-swipe back
+        if (g == GES_SWIPE_U) {                              // reveal older shots
+            scroll = min(scroll + (HIST_ROWS - 1), max_scroll);
+            ui_history_draw(g_hist, g_hist_count, scroll, g_use_mph);
+        } else if (g == GES_SWIPE_D) {                       // reveal newer shots
+            scroll = max(scroll - (HIST_ROWS - 1), 0);
+            ui_history_draw(g_hist, g_hist_count, scroll, g_use_mph);
+        } else if (g == GES_TAP) {
+            switch (ui_history_hit(gx, gy)) {
+                case 99: return;                             // Back
+                case 98:                                     // Clear
+                    if (g_hist_count > 0) {
+                        clear_history(g_hist, g_hist_count);
+                        scroll = 0;
+                        ui_history_draw(g_hist, g_hist_count, scroll, g_use_mph);
+                    }
+                    break;
+            }
+        }
+        if (power_held(2000)) { go_to_sleep(); return; }
+        delay(8);
+    }
+}
+
 // ─── Session rendering helpers ────────────────────────────────────────────────
 
 static void draw_ready()
@@ -325,6 +366,8 @@ static void run_session(SessionMode /*mode*/)
                       ball_kmh, club_kmh, smash, carry_m, total_m);
 
         record_carry(g_club, carry_m, g_stats);
+        record_shot({ (uint8_t)g_club, ball_kmh, club_kmh, carry_m, total_m },
+                    g_hist, g_hist_count);
         draw_result(ball_kmh, club_kmh, smash, carry_m, total_m);
 
         // Hold the result; any tap/swipe dismisses early, else auto-return at 6 s.
@@ -376,7 +419,7 @@ static void speed_loop()
 
 // ─── Blocking menu helpers ────────────────────────────────────────────────────
 
-// Wait for a main-menu row tap. Returns 0/1/2; a power hold sleeps directly.
+// Wait for a main-menu row tap. Returns 0..3; a power hold sleeps directly.
 static int menu_wait()
 {
     while (true) {
@@ -422,6 +465,8 @@ void setup()
 
     nvs_load(g_threshold, g_use_mph, g_club, g_blue_theme, g_layout,
              g_stats, NUM_CLUBS);
+    nvs_load_history(g_hist, g_hist_count);
+    Serial.printf("[NVS] Shot history: %d shot(s)\n", g_hist_count);
     display_init();
     ui_set_theme(g_blue_theme);
 
@@ -452,8 +497,9 @@ void loop()
             ui_menu_draw();
             int sel = menu_wait();
             if      (sel == 0) g_state = ST_MODE;       // Start Session
-            else if (sel == 1) settings_loop();         // Settings → back to menu
-            else if (sel == 2) go_to_sleep();           // Shut Down
+            else if (sel == 1) history_loop();          // Shot History → back to menu
+            else if (sel == 2) settings_loop();         // Settings → back to menu
+            else if (sel == 3) go_to_sleep();           // Shut Down
             break;
         }
         case ST_MODE: {
