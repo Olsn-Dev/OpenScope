@@ -2,28 +2,32 @@
 #include "config.h"
 
 // ─── Public API ───────────────────────────────────────────────────────────────
+//
+// Single-Doppler signal chain: ADC sampling → windowed FFT → peak detection.
+// One 24 GHz CDM324 module gives us ball speed (directly) and club speed (from
+// the pre-impact clubhead signature). It CANNOT give launch angle, spin, or
+// side/dispersion — those need extra sensors and are not computed here.
 
-// Sample all three radar channels simultaneously into the FFT input buffers.
+// Sample the radar channel into the FFT input buffer.
 // Must be called before run_fft() or detect_speeds().
 void sample_radar();
 
-// Run Hamming-windowed FFT on all three channels.
+// Run the Hamming-windowed FFT and convert to a magnitude spectrum.
 // Called internally by detect_speeds(); also exposed for calibration mode.
 void run_fft();
 
-// Analyse all three FFT magnitude spectra and return:
-//   ball_hz    — effective Doppler k [Hz] proportional to true ball speed
-//   club_hz    — effective k for club, or 0 if not found
-//   launch_deg — computed launch angle [°], or -1 if unavailable
-//   side_deg   — computed side angle [°]: positive = right, negative = left
-//                0.0 if unavailable (single-radar fallback)
-//   threshold  — minimum magnitude to count as a real peak
+// Analyse the FFT magnitude spectrum and return:
+//   ball_hz   — Doppler frequency [Hz] of the ball (post-impact peak)
+//   club_hz   — Doppler frequency [Hz] of the clubhead (lower pre-impact peak),
+//               or 0 if a distinct club peak was not found
+//   threshold — minimum magnitude to count as a real peak
 // Returns false if no hit was detected above threshold.
-bool detect_speeds(double& ball_hz, double& club_hz,
-                   float& launch_deg, float& side_deg,
-                   float threshold);
+//
+// Both frequencies are the raw Doppler shifts; the caller converts to speed
+// with HZ_TO_KMH. With a single sensor aligned to the shot direction there is
+// no angle to correct for — the radar sees the true line-of-sight speed.
+bool detect_speeds(double& ball_hz, double& club_hz, float threshold);
 
-// Primary FFT magnitude buffer (Radar L, left V arm).
-// Exposed so calibration mode can display the live spectrum without coupling
-// display code to radar internals.
-extern double vRealL[FFT_SIZE];
+// FFT magnitude buffer. Exposed so calibration mode can display the live
+// spectrum without coupling display code to radar internals.
+extern double vReal[FFT_SIZE];

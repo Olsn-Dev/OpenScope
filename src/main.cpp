@@ -1,10 +1,10 @@
-// OpenScope — DIY Golf Launch Monitor  v0.7
-// ESP32 + 3× CDM324 24 GHz Doppler Radar + ILI9488 3.5" touch TFT
+// OpenScope — DIY Golf Launch Monitor  v0.8
+// ESP32 + 1× CDM324 24 GHz Doppler Radar + ILI9488 3.5" touch TFT
 //
 // Source layout:
 //   config.h   — all compile-time constants and pin definitions
 //   clubs.h/cpp— Club/ClubStats types and the CLUBS[] table
-//   radar.h/cpp— ADC sampling, FFT, peak detection, launch angle solver
+//   radar.h/cpp— ADC sampling, FFT, peak detection (single Doppler channel)
 //   display.h/cpp — all TFT drawing (owns TFT_eSPI object)
 //   storage.h/cpp — NVS persistence (owns Preferences object)
 //   main.cpp   — global state, buttons, sleep, main loops
@@ -100,7 +100,7 @@ static void calibration_loop()
         double peak_mag = 0.0;
         int    peak_bin = -1;
         for (int i = bin_lo; i <= bin_hi; i++) {
-            if (vRealL[i] > peak_mag) { peak_mag = vRealL[i]; peak_bin = i; }
+            if (vReal[i] > peak_mag) { peak_mag = vReal[i]; peak_bin = i; }
         }
         double peak_hz = (peak_bin >= 0)
                          ? ((double)peak_bin * SAMPLE_RATE / FFT_SIZE)
@@ -112,8 +112,8 @@ static void calibration_loop()
 
         if ((float)peak_mag > max_seen) max_seen = (float)peak_mag;
 
-        // Pass vRealL spectrum buffer (Radar L) to display module
-        ui_cal_update(vRealL, peak_hz, peak_mag,
+        // Pass the radar spectrum buffer to the display module
+        ui_cal_update(vReal, peak_hz, peak_mag,
                       noise_ema, max_seen, g_threshold, g_use_mph);
     }
 }
@@ -176,9 +176,7 @@ void setup()
     // ADC: 12-bit, 11 dB attenuation → ~0–3.1 V input range
     // On newer ESP-IDF: replace ADC_11db with ADC_ATTEN_DB_12 if it fails.
     analogReadResolution(12);
-    analogSetPinAttenuation(RADAR_ADC_PIN_L, ADC_11db);
-    analogSetPinAttenuation(RADAR_ADC_PIN_R, ADC_11db);
-    analogSetPinAttenuation(RADAR_ADC_PIN_T, ADC_11db);
+    analogSetPinAttenuation(RADAR_ADC_PIN, ADC_11db);
 
     nvs_load(g_threshold, g_use_mph, g_club, g_stats, NUM_CLUBS);
     display_init();
@@ -196,9 +194,8 @@ void setup()
 
     ui_splash(g_club, g_stats, g_use_mph);
 
-    Serial.printf("[OpenScope] Club: %s  Units: %s  Threshold: %.1f  V-half: %.0f°  Top: %.0f°\n",
-                  CLUBS[g_club].name, speed_unit(g_use_mph),
-                  g_threshold, RADAR_V_HALF_DEG, RADAR_T_ANGLE_DEG);
+    Serial.printf("[OpenScope] Club: %s  Units: %s  Threshold: %.1f\n",
+                  CLUBS[g_club].name, speed_unit(g_use_mph), g_threshold);
     Serial.println("[OpenScope] Ready.");
 }
 
@@ -229,39 +226,29 @@ void loop()
     // ── Radar detection ──────────────────────────────────────────────────────
     sample_radar();
     double ball_hz = 0.0, club_hz = 0.0;
-    float  launch_deg = -1.0f, side_deg = 0.0f;
-    if (!detect_speeds(ball_hz, club_hz, launch_deg, side_deg, g_threshold)) return;
+    if (!detect_speeds(ball_hz, club_hz, g_threshold)) return;
 
     // ── Physics ───────────────────────────────────────────────────────────────
-    // detect_speeds() returns ball_hz = k (true speed proxy, already corrected
-    // for both launch angle α and side angle β by the 3-radar solver).
-    // ball_kmh = k · HZ_TO_KMH is the true ball speed off the face.
-    float ball_kmh = (float)(ball_hz * HZ_TO_KMH);
-    float carry_m;
-    if (launch_deg > 0.0f) {
-        const float alpha_rad = launch_deg * DEG_TO_RAD;
-        const float typ_rad   = CLUBS[g_club].typ_launch * DEG_TO_RAD;
-        const float ang_corr  = sinf(2.0f * alpha_rad) / sinf(2.0f * typ_rad);
-        carry_m = ball_kmh * CLUBS[g_club].carry_f * ang_corr;
-    } else {
-        carry_m = ball_kmh * CLUBS[g_club].carry_f;
-    }
-
+    // MEASURED: ball_hz / club_hz are the Doppler shifts. With one sensor
+    // aligned to the shot line, ball_kmh = ball_hz · HZ_TO_KMH is the true
+    // line-of-sight ball speed off the face. Smash = ball / club speed.
+    //
+    // MODELED: carry/total are estimated from ball speed via each club's
+    // empirical carry factor (carry_f already bakes in that club's typical
+    // launch angle) and rollout factor. A single Doppler cannot measure launch
+    // angle, so carry is a model — not a per-shot measurement.
+    const float ball_kmh = (float)(ball_hz * HZ_TO_KMH);
     const float club_kmh = (club_hz > 0.0) ? (float)(club_hz * HZ_TO_KMH) : 0.0f;
     const float smash    = (club_kmh > 0.0f) ? (ball_kmh / club_kmh) : 0.0f;
+    const float carry_m  = ball_kmh * CLUBS[g_club].carry_f;
     const float total_m  = carry_m * (1.0f + CLUBS[g_club].roll_f);
 
-    const char* side_dir = (side_deg >= 0.0f) ? "R" : "L";
     Serial.printf("[HIT] Ball %.1f km/h | Club %.1f km/h | Smash %.2f"
-                  " | Launch %.1f° | Side %s%.1f° | Carry %.0f m | Total %.0f m\n",
-                  ball_kmh, club_kmh, smash,
-                  (launch_deg > 0.0f) ? launch_deg : 0.0f,
-                  side_dir, fabsf(side_deg),
-                  carry_m, total_m);
+                  " | Carry %.0f m | Total %.0f m\n",
+                  ball_kmh, club_kmh, smash, carry_m, total_m);
 
     record_carry(g_club, carry_m, g_stats);
-    ui_result(ball_kmh, club_kmh, carry_m, total_m, launch_deg, side_deg,
-              g_club, g_use_mph);
+    ui_result(ball_kmh, club_kmh, smash, carry_m, total_m, g_club, g_use_mph);
 
     // ── Hold result, remain responsive ───────────────────────────────────────
     // Any tap dismisses early; otherwise auto-returns after 6 s.
