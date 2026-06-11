@@ -33,6 +33,21 @@ void display_init()
     tft.fillScreen(TFT_BLACK);
 }
 
+void display_splash()
+{
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(4); tft.setTextSize(2);              // ~52 px wordmark
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("OpenScope", SCR_W / 2, SCR_H / 2 - 30);
+    tft.setTextSize(1);                                  // others assume size 1
+    tft.drawFastHLine(SCR_W / 2 - 92, SCR_H / 2 + 6, 184, s_label_col);
+    tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    tft.drawString("GOLF LAUNCH MONITOR", SCR_W / 2, SCR_H / 2 + 26);
+    tft.drawString(FW_VERSION, SCR_W / 2, SCR_H / 2 + 48);
+    delay(1000);
+}
+
 void display_goodbye()
 {
     tft.fillScreen(TFT_BLACK);
@@ -334,7 +349,10 @@ static void draw_gear(int cx, int cy)
 // These map to ui_splash_hit() codes 3 / 0 / 2.
 static void draw_session_nav(const char* hint)
 {
-    const int by = BAR_Y + BAR_H / 2;
+    const int by = BAR_Y + BAR_H / 2 + 1;
+
+    // Filled "dock" strip — makes the tappable bar read as a control surface.
+    tft.fillRect(0, BAR_Y + 1, SCR_W, BAR_H - 1, COL_TILE_BG);
     tft.drawFastHLine(0, BAR_Y, SCR_W, COL_DIV);
 
     // Back chevron + label (bottom-left)
@@ -343,16 +361,16 @@ static void draw_session_nav(const char* hint)
     tft.drawLine(25, by - 9, 15, by, s_label_col);
     tft.drawLine(15, by, 25, by + 9, s_label_col);
     tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(2); tft.setTextColor(s_label_col, TFT_BLACK);
+    tft.setTextFont(2); tft.setTextColor(s_label_col, COL_TILE_BG);
     tft.drawString("Back", 34, by);
 
     // Centre hint
-    tft.setTextDatum(MC_DATUM); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM); tft.setTextColor(COL_UNIT, COL_TILE_BG);
     tft.drawString(hint, SCR_W / 2, by);
 
     // Menu / settings gear (bottom-right)
     draw_gear(SCR_W - 24, by);
-    tft.setTextDatum(MR_DATUM); tft.setTextColor(s_label_col, TFT_BLACK);
+    tft.setTextDatum(MR_DATUM); tft.setTextColor(s_label_col, COL_TILE_BG);
     tft.drawString("Menu", SCR_W - 42, by);
 }
 
@@ -419,10 +437,12 @@ void ui_result(float ball_kmh, float club_kmh, float smash,
 
     draw_club_tile(2, 1, club_idx);
 
-    // Mini row — tap-to-continue hint (any tap dismisses).
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    // Mini row — tap-to-continue hint (any tap dismisses), same dock styling
+    // as the session nav so the bottom strip is consistent across screens.
+    tft.fillRect(0, BAR_Y + 1, SCR_W, BAR_H - 1, COL_TILE_BG);
     tft.drawFastHLine(0, BAR_Y, SCR_W, COL_DIV);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(2); tft.setTextColor(s_label_col, COL_TILE_BG);
     tft.drawString("TAP TO CONTINUE", SCR_W / 2, ROW_H * 2 + MINI_ROW_H / 2);
 }
 
@@ -535,67 +555,131 @@ void ui_speed(float swing_kmh, bool use_mph, bool have)
     tft.setTextFont(4); tft.setTextColor(COL_UNIT, TFT_BLACK);
     tft.drawString(speed_unit(use_mph), SCR_W / 2, 198);
 
-    // Back-only nav (no club / layout switching in speed mode).
-    const int by = BAR_Y + BAR_H / 2;
+    // Back-only nav (no club / layout switching in speed mode) — dock styling.
+    const int by = BAR_Y + BAR_H / 2 + 1;
+    tft.fillRect(0, BAR_Y + 1, SCR_W, BAR_H - 1, COL_TILE_BG);
     tft.drawFastHLine(0, BAR_Y, SCR_W, COL_DIV);
     tft.drawLine(24, by - 9, 14, by, s_label_col);
     tft.drawLine(14, by, 24, by + 9, s_label_col);
+    tft.drawLine(25, by - 9, 15, by, s_label_col);
+    tft.drawLine(15, by, 25, by + 9, s_label_col);
     tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(2); tft.setTextColor(s_label_col, TFT_BLACK);
+    tft.setTextFont(2); tft.setTextColor(s_label_col, COL_TILE_BG);
     tft.drawString("Back", 34, by);
-    tft.setTextDatum(MC_DATUM); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM); tft.setTextColor(COL_UNIT, COL_TILE_BG);
     tft.drawString("SWING TO MEASURE", SCR_W / 2, by);
 }
 
 // ── Main menu & mode select ────────────────────────────────────────────────
 
-// Shared full-width list-row renderer for the menu / mode screens.
-static void draw_menu_row(int i, const char* label, uint16_t accent)
+// Shared full-width list-row renderer for the menu / mode screens. `pressed`
+// draws the momentary touch-feedback state (lighter fill).
+static void draw_menu_row(int i, const char* label, uint16_t accent,
+                          bool pressed = false)
 {
-    const int y = MENU_HDR_H + i * MENU_ROW_H;
-    const int h = MENU_ROW_H - MENU_ROW_GAP;
-    tft.fillRoundRect(8, y + 4, SCR_W - 16, h - 4, BTN_RADIUS, COL_BTN_BG);
+    const int y  = MENU_HDR_H + i * MENU_ROW_H;
+    const int h  = MENU_ROW_H - MENU_ROW_GAP;
+    const int cy = y + h / 2 + 2;
+    const uint16_t bg = pressed ? COL_BTN_BRD : COL_BTN_BG;
+    tft.fillRoundRect(8, y + 4, SCR_W - 16, h - 4, BTN_RADIUS, bg);
     tft.fillRoundRect(8, y + 4, 6, h - 4, BTN_RADIUS, accent);   // accent stripe
     tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(4); tft.setTextColor(TFT_WHITE, COL_BTN_BG);
-    tft.drawString(label, 28, y + h / 2 + 2);
+    tft.setTextFont(4); tft.setTextColor(TFT_WHITE, bg);
+    tft.drawString(label, 28, cy);
+    // "›" affordance chevron on the right — these rows navigate somewhere.
+    tft.drawLine(SCR_W - 34, cy - 8, SCR_W - 26, cy, COL_UNIT);
+    tft.drawLine(SCR_W - 26, cy, SCR_W - 34, cy + 8, COL_UNIT);
+    tft.drawLine(SCR_W - 35, cy - 8, SCR_W - 27, cy, COL_UNIT);
+    tft.drawLine(SCR_W - 27, cy, SCR_W - 35, cy + 8, COL_UNIT);
 }
 
-static void draw_screen_header(const char* title, bool back)
+// Press-feedback flashes: redraw the tapped control highlighted and hold it
+// just long enough to register. The next screen redraw restores it.
+
+// Labels/accents mirrored from ui_menu_draw / ui_mode_draw — the flash has to
+// redraw the full row since the fill repaints label and stripe.
+static const struct { const char* label; uint16_t accent; } MENU_ROWS[4] = {
+    { "Start Session", TFT_GREEN  },
+    { "Shot History",  TFT_YELLOW },
+    { "Settings",      TFT_CYAN   },
+    { "Shut Down",     TFT_RED    },
+};
+static const struct { const char* label; uint16_t accent; } MODE_ROWS[3] = {
+    { "Practice Range", TFT_GREEN  },
+    { "On Course",      TFT_CYAN   },
+    { "Speed Training", TFT_YELLOW },
+};
+
+void ui_menu_flash(int row)
 {
-    tft.fillRect(0, 0, SCR_W, MENU_HDR_H, TFT_NAVY);
+    if (row < 0 || row > 3) return;
+    draw_menu_row(row, MENU_ROWS[row].label, MENU_ROWS[row].accent, true);
+    delay(80);
+}
+
+void ui_mode_flash(int row)
+{
+    if (row < 0 || row > 2) return;
+    draw_menu_row(row, MODE_ROWS[row].label, MODE_ROWS[row].accent, true);
+    delay(80);
+}
+
+void ui_pill_flash(bool large_layout, int club_idx)
+{
+    if (large_layout) draw_club_pill(LPILL_X, LPILL_Y, PILL_W, PILL_H,
+                                     club_idx, true, true);
+    else              draw_club_pill(PILL_X,  PILL_Y,  PILL_W, PILL_H,
+                                     club_idx, false, true);
+    delay(80);
+}
+
+// Shared sub-screen header: dark card strip with a themed accent underline,
+// optional back chevron on the left and an optional action label on the right.
+// Used by the menu, mode-select, club-picker, settings and history screens.
+static void draw_screen_header(const char* title, bool back, int h,
+                               const char* right = nullptr,
+                               uint16_t right_col = TFT_CYAN)
+{
+    tft.fillRect(0, 0, SCR_W, h - 2, COL_TILE_BG);
+    tft.drawFastHLine(0, h - 2, SCR_W, s_label_col);     // accent underline
+    tft.drawFastHLine(0, h - 1, SCR_W, COL_DIV);
+    const int y = (h - 2) / 2;
     if (back) {
-        const int y = MENU_HDR_H / 2;
-        tft.drawLine(24, y - 9, 14, y, TFT_CYAN);
-        tft.drawLine(14, y, 24, y + 9, TFT_CYAN);
+        tft.drawLine(24, y - 9, 14, y, s_label_col);
+        tft.drawLine(14, y, 24, y + 9, s_label_col);
+        tft.drawLine(25, y - 9, 15, y, s_label_col);
+        tft.drawLine(15, y, 25, y + 9, s_label_col);
         tft.setTextDatum(ML_DATUM);
-        tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_NAVY);
+        tft.setTextFont(2); tft.setTextColor(s_label_col, COL_TILE_BG);
         tft.drawString("Back", 34, y);
-        tft.setTextDatum(MC_DATUM);
-    } else {
-        tft.setTextDatum(MC_DATUM);
     }
-    tft.setTextFont(4); tft.setTextColor(s_label_col, TFT_NAVY);
-    tft.drawString(title, SCR_W / 2, MENU_HDR_H / 2);
+    if (right) {
+        tft.setTextDatum(MR_DATUM);
+        tft.setTextFont(2); tft.setTextColor(right_col, COL_TILE_BG);
+        tft.drawString(right, SCR_W - 16, y);
+    }
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(4); tft.setTextColor(TFT_WHITE, COL_TILE_BG);
+    tft.drawString(title, SCR_W / 2, y);
 }
 
 void ui_menu_draw()
 {
     tft.fillScreen(TFT_BLACK);
-    draw_screen_header("OpenScope", false);
-    draw_menu_row(0, "Start Session", TFT_GREEN);
-    draw_menu_row(1, "Shot History",  TFT_YELLOW);
-    draw_menu_row(2, "Settings",      TFT_CYAN);
-    draw_menu_row(3, "Shut Down",     TFT_RED);
+    draw_screen_header("OpenScope", false, MENU_HDR_H);
+    for (int i = 0; i < 4; i++)
+        draw_menu_row(i, MENU_ROWS[i].label, MENU_ROWS[i].accent);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(1); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    tft.drawString(FW_VERSION, SCR_W / 2, SCR_H - 5);
 }
 
 void ui_mode_draw()
 {
     tft.fillScreen(TFT_BLACK);
-    draw_screen_header("Select Mode", true);
-    draw_menu_row(0, "Practice Range", TFT_GREEN);
-    draw_menu_row(1, "On Course",      TFT_CYAN);
-    draw_menu_row(2, "Speed Training", TFT_YELLOW);
+    draw_screen_header("Select Mode", true, MENU_HDR_H);
+    for (int i = 0; i < 3; i++)
+        draw_menu_row(i, MODE_ROWS[i].label, MODE_ROWS[i].accent);
 }
 
 // ── Club picker ────────────────────────────────────────────────────────────
@@ -607,17 +691,7 @@ void ui_picker_draw(int club_idx, int scroll)
 {
     tft.fillScreen(TFT_BLACK);
 
-    // Header with back chevron + title.
-    tft.fillRect(0, 0, SCR_W, PICK_HDR_H, TFT_NAVY);
-    const int hy = PICK_HDR_H / 2;
-    tft.drawLine(24, hy - 9, 14, hy, TFT_CYAN);
-    tft.drawLine(14, hy, 24, hy + 9, TFT_CYAN);
-    tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_NAVY);
-    tft.drawString("Back", 34, hy);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(4); tft.setTextColor(s_label_col, TFT_NAVY);
-    tft.drawString("Select Club", SCR_W / 2, hy);
+    draw_screen_header("Select Club", true, PICK_HDR_H);
 
     // Visible rows.
     for (int r = 0; r < PICK_ROWS; r++) {
@@ -665,22 +739,8 @@ void ui_history_draw(const ShotRecord* shots, int count, int scroll,
 {
     tft.fillScreen(TFT_BLACK);
 
-    // Header with back chevron, title and a Clear action on the right.
-    tft.fillRect(0, 0, SCR_W, HIST_HDR_H, TFT_NAVY);
-    const int hy = HIST_HDR_H / 2;
-    tft.drawLine(24, hy - 9, 14, hy, TFT_CYAN);
-    tft.drawLine(14, hy, 24, hy + 9, TFT_CYAN);
-    tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_NAVY);
-    tft.drawString("Back", 34, hy);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(4); tft.setTextColor(s_label_col, TFT_NAVY);
-    tft.drawString("Shot History", SCR_W / 2, hy);
-    if (count > 0) {
-        tft.setTextDatum(MR_DATUM);
-        tft.setTextFont(2); tft.setTextColor(TFT_RED, TFT_NAVY);
-        tft.drawString("Clear", SCR_W - 16, hy);
-    }
+    draw_screen_header("Shot History", true, HIST_HDR_H,
+                       count > 0 ? "Clear" : nullptr, TFT_RED);
 
     if (count == 0) {
         tft.setTextDatum(MC_DATUM);
@@ -717,31 +777,33 @@ void ui_history_draw(const ShotRecord* shots, int count, int scroll,
         const ShotRecord& s = shots[count - 1 - n];
         const int y  = HIST_HDR_H + HIST_COL_H + r * HIST_ROW_H;
         const int ry = y + HIST_ROW_H / 2;
-        tft.drawFastHLine(0, y + HIST_ROW_H - 1, SCR_W, COL_DIV);
+        // Zebra striping — much easier to track a row across six columns.
+        const uint16_t bg = (r & 1) ? TFT_BLACK : COL_TILE_BG;
+        if (bg != TFT_BLACK) tft.fillRect(0, y, SCR_W, HIST_ROW_H, bg);
 
         tft.setTextFont(2);
         tft.setTextDatum(ML_DATUM);
         snprintf(buf, sizeof(buf), "%d", count - n);     // shot number, 1 = oldest
-        tft.setTextColor(COL_UNIT, TFT_BLACK);
+        tft.setTextColor(COL_UNIT, bg);
         tft.drawString(buf, 16, ry);
-        tft.setTextColor(s_label_col, TFT_BLACK);
+        tft.setTextColor(s_label_col, bg);
         tft.drawString(CLUBS[s.club].abbr, 60, ry);
 
         tft.setTextDatum(MR_DATUM);
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.setTextColor(TFT_WHITE, bg);
         snprintf(buf, sizeof(buf), "%.0f", disp_speed(s.ball_kmh, use_mph));
         tft.drawString(buf, HCOL_BALL, ry);
 
         if (s.club_kmh > 0.0f) {
             snprintf(buf, sizeof(buf), "%.2f", s.ball_kmh / s.club_kmh);
-            tft.setTextColor(TFT_GREEN, TFT_BLACK);
+            tft.setTextColor(TFT_GREEN, bg);
         } else {
             snprintf(buf, sizeof(buf), "--");
-            tft.setTextColor(COL_UNIT, TFT_BLACK);
+            tft.setTextColor(COL_UNIT, bg);
         }
         tft.drawString(buf, HCOL_SMASH, ry);
 
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.setTextColor(TFT_WHITE, bg);
         snprintf(buf, sizeof(buf), "%.0f", disp_dist(s.carry_m, use_mph));
         tft.drawString(buf, HCOL_CARRY, ry);
         snprintf(buf, sizeof(buf), "%.0f", disp_dist(s.total_m, use_mph));
@@ -764,17 +826,7 @@ void ui_settings_draw(int club_idx, bool use_mph, bool blue_theme,
 {
     tft.fillScreen(TFT_BLACK);
 
-    // Header with back chevron (tap to exit).
-    tft.fillRect(0, 0, SCR_W, SET_HDR_H, TFT_NAVY);
-    const int hy = SET_HDR_H / 2;
-    tft.drawLine(24, hy - 9, 14, hy, TFT_CYAN);
-    tft.drawLine(14, hy, 24, hy + 9, TFT_CYAN);
-    tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_NAVY);
-    tft.drawString("Back", 34, hy);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(4); tft.setTextColor(s_label_col, TFT_NAVY);
-    tft.drawString("Settings", SCR_W / 2, hy);
+    draw_screen_header("Settings", true, SET_HDR_H);
 
     char reset_val[12];
     snprintf(reset_val, sizeof(reset_val), "%s",
@@ -808,6 +860,17 @@ void ui_settings_draw(int club_idx, bool use_mph, bool blue_theme,
         tft.setTextDatum(MR_DATUM);
         tft.drawString(values[i], SCR_W - 16, y + SET_ROW_H / 2);
     }
+}
+
+// Settings press feedback — a bright outline is enough here (re-rendering the
+// row needs the value strings, which live in ui_settings_draw's caller state).
+void ui_settings_flash(int row)
+{
+    if (row < 0 || row >= SET_N_ROWS) return;
+    const int y = SET_HDR_H + row * SET_ROW_H;
+    tft.drawRoundRect(4, y + 3, SCR_W - 8,  SET_ROW_H - 6, BTN_RADIUS / 2, TFT_WHITE);
+    tft.drawRoundRect(5, y + 4, SCR_W - 10, SET_ROW_H - 8, BTN_RADIUS / 2, TFT_WHITE);
+    delay(80);
 }
 
 // ─── Calibration screen ───────────────────────────────────────────────────────

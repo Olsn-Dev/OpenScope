@@ -1,5 +1,7 @@
 #pragma once
 
+#define FW_VERSION "v0.9"
+
 // ─── Pins ─────────────────────────────────────────────────────────────────────
 
 // Single-radar layout:

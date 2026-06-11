@@ -153,7 +153,9 @@ static void settings_loop()
         if (g == GES_SWIPE_R && gx < EDGE_BACK_X) { save_settings(); return; }
 
         if (g == GES_TAP) {
-            switch (ui_settings_hit(gx, gy)) {
+            int hit = ui_settings_hit(gx, gy);
+            if (hit >= 0 && hit < 6) ui_settings_flash(hit);
+            switch (hit) {
                 case 0:  // Units (Mph/Yds ⇄ Kmh/m)
                     g_use_mph = !g_use_mph;
                     Serial.printf("[SET] Units → %s\n", speed_unit(g_use_mph));
@@ -329,7 +331,9 @@ static void run_session(SessionMode /*mode*/)
             switch (hit) {
                 case 3: return;                                  // Back
                 case 2: settings_loop(); draw_ready(); continue; // Menu/Settings
-                case 1: club_picker();   draw_ready(); continue; // club pill
+                case 1:                                          // club pill
+                    ui_pill_flash(g_layout == LAYOUT_LARGE_DIGIT, g_club);
+                    club_picker();   draw_ready(); continue;
                 case 4:                                          // metric cell
                     if (g_layout == LAYOUT_ADVANCED) {
                         int m = ui_advanced_metric_at(gx, gy);
@@ -426,7 +430,7 @@ static int menu_wait()
         int gx, gy;
         if (ui_get_gesture(&gx, &gy) == GES_TAP) {
             int h = ui_menu_hit(gx, gy);
-            if (h >= 0) return h;
+            if (h >= 0) { ui_menu_flash(h); return h; }
         }
         if (power_held(2000)) go_to_sleep();
         delay(8);
@@ -443,7 +447,7 @@ static int mode_wait()
         if (g == GES_TAP) {
             int h = ui_mode_hit(gx, gy);
             if (h == 3) return -1;                 // Back
-            if (h >= 0) return h;
+            if (h >= 0) { ui_mode_flash(h); return h; }
         }
         if (power_held(2000)) go_to_sleep();
         delay(8);
@@ -455,7 +459,7 @@ static int mode_wait()
 void setup()
 {
     Serial.begin(115200);
-    Serial.println("\n[OpenScope] v0.9 booting");
+    Serial.println("\n[OpenScope] " FW_VERSION " booting");
 
     pinMode(BTN_POWER, INPUT_PULLUP);
 
@@ -469,6 +473,7 @@ void setup()
     Serial.printf("[NVS] Shot history: %d shot(s)\n", g_hist_count);
     display_init();
     ui_set_theme(g_blue_theme);
+    display_splash();
 
     // Touch: apply stored calibration, or run the 4-corner calibration once.
     uint16_t tcal[5];
