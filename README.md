@@ -129,8 +129,9 @@ physical control is Power (hold 2 s anywhere → sleep / shut down).
 
 | Screen | Touch |
 |--------|-------|
-| Main menu | Tap **Start Session**, **Settings**, or **Shut Down** |
+| Main menu | Tap **Start Session**, **Shot History**, **Settings**, or **Shut Down** |
 | Mode select | Tap **Practice Range**, **On Course**, or **Speed Training** · **‹ Back** |
+| Shot history | **Swipe ↑/↓** scroll the last 50 shots · **Clear** wipes the log · **‹ Back** |
 | Session | Tap the **club pill** → picker · **swipe ←/→** switch layout · tap a metric (Advanced) → Large Digit · **⚙ Menu** → Settings · **‹ Back** → mode select |
 | Large Digit | **Swipe ↑/↓** cycle metric (club → ball → smash → carry → total) |
 | Result | Tap **anywhere** → dismiss |
@@ -280,7 +281,7 @@ angle correction. See [the source](src/radar.cpp) for the signal chain and
 
 ## UI Mockup
 
-![OpenScope UI — eight screens: menu, mode select, Advanced & Large Digit layouts, club picker, speed training, settings, calibration](docs/openscope-ui.png?v=4)
+![OpenScope UI — ten screens: boot splash, menu, mode select, Advanced & Large Digit layouts, club picker, shot history, speed training, settings, calibration](docs/openscope-ui.png?v=5)
 
 ## License
 
