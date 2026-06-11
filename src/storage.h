@@ -5,11 +5,14 @@
 // All functions open and close the "openscope" NVS namespace internally.
 
 // Load all persisted settings and per-club stats into the provided variables.
+// blue_theme / layout are the LM1 UI preferences (default Black / Advanced).
 void nvs_load(float& threshold, bool& use_mph, int& club,
+              bool& blue_theme, int& layout,
               ClubStats* stats, int num_clubs);
 
-// Persist the four settings scalars.
-void nvs_save_settings(float threshold, bool use_mph, int club);
+// Persist the settings scalars (units, club, theme, layout, threshold).
+void nvs_save_settings(float threshold, bool use_mph, int club,
+                       bool blue_theme, int layout);
 
 // Persist one club's stats entry.
 void nvs_save_stats(int idx, const ClubStats& s);

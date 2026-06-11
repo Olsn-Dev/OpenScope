@@ -7,6 +7,16 @@
 // The TFT object lives here — all drawing goes through this module.
 static TFT_eSPI tft;
 
+// ─── Theme ──────────────────────────────────────────────────────────────────
+// Only the metric-label colour changes between the two LM1 themes; everything
+// else (black bg, white numbers, grey units) is shared. Default: black theme.
+static uint16_t s_label_col = COL_LABEL_BLACK;
+
+void ui_set_theme(bool blue_theme)
+{
+    s_label_col = blue_theme ? COL_LABEL_BLUE : COL_LABEL_BLACK;
+}
+
 // ─── Unit helpers ─────────────────────────────────────────────────────────────
 
 float disp_speed(float kmh, bool use_mph) { return use_mph ? kmh * 0.621371f : kmh; }
@@ -66,6 +76,52 @@ bool ui_get_tap(int* x, int* y)
     return edge;
 }
 
+// ─── Gestures ───────────────────────────────────────────────────────────────
+// A press/drag/release recogniser layered on the same XPT2046 readback.
+// It tracks the press-down point and the last point seen while held, then on
+// release classifies the motion as a tap or a directional swipe. Tap fires on
+// release (not press) so a drag can be distinguished from a tap; on a tap the
+// returned (x,y) is the press location, on a swipe it is the *start* location
+// (handy for left-edge "swipe back" detection).
+//
+// NOTE: resistive panels give noisy samples right at lift-off, so we classify
+// on the last *held* sample, never on the release frame itself. Momentum/
+// inertial scrolling isn't available on TFT_eSPI — lists scroll by swipe steps.
+
+static bool s_g_down = false;
+static int  s_g_sx, s_g_sy, s_g_lx, s_g_ly;   // start + last-held coordinates
+
+UiGesture ui_get_gesture(int* x, int* y)
+{
+    uint16_t tx, ty;
+    bool pressed = tft.getTouch(&tx, &ty);
+
+    if (pressed) {
+        if (!s_g_down) { s_g_down = true; s_g_sx = s_g_lx = tx; s_g_sy = s_g_ly = ty; }
+        else           { s_g_lx = tx; s_g_ly = ty; }
+        return GES_NONE;                       // still down — wait for release
+    }
+
+    if (!s_g_down) return GES_NONE;            // idle
+    s_g_down = false;                          // falling edge: classify
+
+    const int dx = s_g_lx - s_g_sx, dy = s_g_ly - s_g_sy;
+    const int adx = abs(dx), ady = abs(dy);
+
+    // Small movement → tap (debounces digitizer jitter).
+    if (adx < TAP_MOVE_MAX && ady < TAP_MOVE_MAX) {
+        *x = s_g_sx; *y = s_g_sy; return GES_TAP;
+    }
+    if (adx >= ady) {                          // horizontal-dominant
+        if (adx < SWIPE_MIN) { *x = s_g_sx; *y = s_g_sy; return GES_TAP; }
+        *x = s_g_sx; *y = s_g_sy;
+        return dx > 0 ? GES_SWIPE_R : GES_SWIPE_L;
+    }
+    if (ady < SWIPE_MIN) { *x = s_g_sx; *y = s_g_sy; return GES_TAP; }
+    *x = s_g_sx; *y = s_g_sy;
+    return dy > 0 ? GES_SWIPE_D : GES_SWIPE_U;
+}
+
 // ─── Hit-testing ──────────────────────────────────────────────────────────────
 
 static inline bool in_rect(int x, int y, int rx, int ry, int rw, int rh)
@@ -73,22 +129,91 @@ static inline bool in_rect(int x, int y, int rx, int ry, int rw, int rh)
     return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
 }
 
+// Session "ready" screen (both layouts share a bottom nav strip):
+//   1 = club pill (open picker)   2 = Menu/gear (settings)
+//   3 = Back (to mode select)     4 = a metric cell tapped (Advanced only)
+//   0 = none
 int ui_splash_hit(int x, int y)
 {
-    if (y >= BAR_Y) return 2;                                   // settings bar
-    if (in_rect(x, y, COL_W * 2, ROW_H, COL_W, ROW_H)) return 1; // club circle
+    if (y >= BAR_Y) {                                  // bottom nav strip
+        if (x < 150)          return 3;                // Back (bottom-left)
+        if (x > SCR_W - 150)  return 2;                // Menu/settings (bottom-right)
+        return 0;
+    }
+    if (in_rect(x, y, PILL_X, PILL_Y, PILL_W, PILL_H)) return 1;   // club pill
+    // A tap on a metric cell jumps into Large Digit for that metric: the whole
+    // top row (Club/Ball/Smash) plus the bottom-row Carry/Total cells.
+    if (y < ROW_H) return 4;
+    if (y < ROW_H * 2 && x < COL_W * 2) return 4;
     return 0;
+}
+
+// Large-Digit screen hit-test: 1 = club pill, 2 = Menu/settings, 3 = Back,
+// 0 = none (the metric area cycles by swipe, not tap).
+int ui_large_hit(int x, int y)
+{
+    if (y >= BAR_Y) {
+        if (x < 150)         return 3;
+        if (x > SCR_W - 150) return 2;
+        return 0;
+    }
+    if (in_rect(x, y, LPILL_X, LPILL_Y, PILL_W, PILL_H)) return 1;
+    return 0;
+}
+
+// Map a top-row Advanced cell tap to a UiMetric (0=Club,1=Ball,2=Smash). The
+// bottom row's Carry/Total are columns 0/1 in row 1.
+int ui_advanced_metric_at(int x, int y)
+{
+    int col = x / COL_W; if (col > 2) col = 2;
+    if (y < ROW_H) return col;                         // Club / Ball / Smash
+    if (col == 0)  return MET_CARRY;
+    if (col == 1)  return MET_TOTAL;
+    return -1;                                         // pill cell
 }
 
 int ui_result_hit(int /*x*/, int /*y*/) { return 1; }          // any tap dismisses
 
-int ui_settings_hit(int /*x*/, int y)
+// Settings: 0..5 = item rows, 9 = Back (header chevron / exit), -1 = none.
+int ui_settings_hit(int x, int y)
 {
-    if (y >= SET_DONE_Y) return 9;                              // DONE bar
+    if (y < SET_HDR_H) return (x < BACK_W) ? 9 : -1;           // header back
     for (int i = 0; i < SET_N_ROWS; i++) {
         int top = SET_HDR_H + i * SET_ROW_H;
         if (y >= top && y < top + SET_ROW_H) return i;
     }
+    return -1;
+}
+
+// Main menu: 0=Start Session, 1=Settings, 2=Shut Down, -1=none.
+int ui_menu_hit(int /*x*/, int y)
+{
+    for (int i = 0; i < 3; i++) {
+        int top = MENU_HDR_H + i * MENU_ROW_H;
+        if (y >= top && y < top + MENU_ROW_H - MENU_ROW_GAP) return i;
+    }
+    return -1;
+}
+
+// Mode select: 0=Practice, 1=On Course, 2=Speed Training, 3=Back, -1=none.
+int ui_mode_hit(int x, int y)
+{
+    if (y < MENU_HDR_H && x < BACK_W) return 3;        // back chevron
+    for (int i = 0; i < 3; i++) {
+        int top = MENU_HDR_H + i * MENU_ROW_H;
+        if (y >= top && y < top + MENU_ROW_H - MENU_ROW_GAP) return i;
+    }
+    return -1;
+}
+
+// Club picker: returns the club index tapped, 99 = Back, -1 = none.
+// `scroll` is the index of the first visible row.
+int ui_picker_hit(int x, int y, int scroll)
+{
+    if (y < PICK_HDR_H) return (x < BACK_W) ? 99 : -1; // back chevron
+    int row = (y - PICK_HDR_H) / PICK_ROW_H;
+    int idx = scroll + row;
+    if (idx >= 0 && idx < NUM_CLUBS) return idx;
     return -1;
 }
 
@@ -128,7 +253,7 @@ static void draw_tile(int col, int row,
 {
     const int cx = col * COL_W + COL_W / 2;
     const int y0 = row * ROW_H;
-    uint16_t lc = dimmed ? COL_DIM : TFT_CYAN;
+    uint16_t lc = dimmed ? COL_DIM : s_label_col;   // themed label colour
     uint16_t nc = dimmed ? COL_DIM : num_col;
     uint16_t uc = dimmed ? COL_DIM : COL_UNIT;
 
@@ -141,19 +266,46 @@ static void draw_tile(int col, int row,
     tft.drawString(unit, cx, y0 + 118);
 }
 
-static void draw_club_tile(int col, int row, int club_idx, bool tap_hint = false)
+// LM1-style club selector: a rounded-rectangle *outline* pill holding the
+// current club abbreviation. This is the primary interactive control on the
+// Advanced screen — tap it to open the club picker. `pressed` draws the
+// momentary highlight state required for touch feedback.
+static void draw_club_pill(int x, int y, int w, int h, int club_idx,
+                           bool tap_hint = false, bool pressed = false)
 {
-    const int cx = col * COL_W + COL_W / 2;
-    const int cy = row * ROW_H + ROW_H / 2;
-    tft.fillCircle(cx, cy, 43, COL_BTN_BG);
-    tft.drawCircle(cx, cy, 43, TFT_CYAN);
-    tft.drawCircle(cx, cy, 44, TFT_CYAN);
+    const int cx = x + w / 2, cy = y + h / 2;
+    tft.fillRoundRect(x, y, w, h, BTN_RADIUS, pressed ? COL_BTN_BRD : COL_BTN_BG);
+    tft.drawRoundRect(x, y, w, h, BTN_RADIUS, s_label_col);
+    tft.drawRoundRect(x + 1, y + 1, w - 2, h - 2, BTN_RADIUS, s_label_col);
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(4); tft.setTextColor(TFT_WHITE, COL_BTN_BG);
-    tft.drawString(CLUBS[club_idx].abbr, cx, cy);
+    // Font 4 (full ASCII) — fonts 6/7/8 are numeric-only and can't draw the
+    // alphabetic club abbreviations ("PW", "3W", "LW", …).
+    tft.setTextFont(4);
+    tft.setTextColor(TFT_WHITE, pressed ? COL_BTN_BRD : COL_BTN_BG);
+    tft.drawString(CLUBS[club_idx].abbr, cx, cy - 2);
     if (tap_hint) {
         tft.setTextFont(1); tft.setTextColor(COL_UNIT, TFT_BLACK);
-        tft.drawString("TAP TO CHANGE", cx, cy + 50);
+        tft.drawString("TAP TO CHANGE", cx, y + h + 8);
+    }
+}
+
+// Convenience: draw the club pill centred in the bottom-right grid cell.
+static void draw_club_tile(int /*col*/, int /*row*/, int club_idx,
+                           bool tap_hint = false)
+{
+    draw_club_pill(PILL_X, PILL_Y, PILL_W, PILL_H, club_idx, tap_hint);
+}
+
+// Gear glyph in the top-right corner of the session screens (opens Settings).
+static void draw_gear(int cx, int cy)
+{
+    tft.drawCircle(cx, cy, 9, s_label_col);
+    tft.fillCircle(cx, cy, 3, s_label_col);
+    for (int a = 0; a < 360; a += 45) {       // eight teeth
+        float r = a * 0.0174533f;
+        int x0 = cx + (int)(cosf(r) * 9),  y0 = cy + (int)(sinf(r) * 9);
+        int x1 = cx + (int)(cosf(r) * 13), y1 = cy + (int)(sinf(r) * 13);
+        tft.drawLine(x0, y0, x1, y1, s_label_col);
     }
 }
 
@@ -166,6 +318,35 @@ static void draw_club_tile(int col, int row, int club_idx, bool tap_hint = false
 //   │  CARRY   │  TOTAL   │  [Club]  │  ← row 1
 //   └──────────┴──────────┴──────────┘
 //   (mini row below: tap-to-continue hint)
+
+// Bottom navigation strip shared by the session "ready" screens (both layouts).
+// Left = Back (to mode select), centre = a hint, right = Menu/Settings (gear).
+// These map to ui_splash_hit() codes 3 / 0 / 2.
+static void draw_session_nav(const char* hint)
+{
+    const int by = BAR_Y + BAR_H / 2;
+    tft.drawFastHLine(0, BAR_Y, SCR_W, COL_DIV);
+
+    // Back chevron + label (bottom-left)
+    tft.drawLine(24, by - 9, 14, by, s_label_col);
+    tft.drawLine(14, by, 24, by + 9, s_label_col);
+    tft.drawLine(25, by - 9, 15, by, s_label_col);
+    tft.drawLine(15, by, 25, by + 9, s_label_col);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextFont(2); tft.setTextColor(s_label_col, TFT_BLACK);
+    tft.drawString("Back", 34, by);
+
+    // Centre hint
+    tft.setTextDatum(MC_DATUM); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    tft.drawString(hint, SCR_W / 2, by);
+
+    // Menu / settings gear (bottom-right)
+    draw_gear(SCR_W - 24, by);
+    tft.setTextDatum(MR_DATUM); tft.setTextColor(s_label_col, TFT_BLACK);
+    tft.drawString("Menu", SCR_W - 42, by);
+}
+
+// ── Advanced layout ────────────────────────────────────────────────────────
 
 void ui_splash(int club_idx, const ClubStats* stats, bool use_mph)
 {
@@ -187,14 +368,9 @@ void ui_splash(int club_idx, const ClubStats* stats, bool use_mph)
     }
     draw_tile(0, 1, "Avg",  avg,  dist_unit(use_mph), TFT_WHITE);
     draw_tile(1, 1, "Best", best, dist_unit(use_mph), TFT_GREEN);
-    draw_club_tile(2, 1, club_idx, true);
+    draw_club_tile(2, 1, club_idx);
 
-    tft.setTextDatum(TC_DATUM);
-    tft.setTextFont(2); tft.setTextColor(COL_DIM, TFT_BLACK);
-    tft.drawString("SWING WHEN READY", SCR_W / 2, ROW_H + 4);
-
-    // Bottom action bar — full-width SETTINGS touch button.
-    draw_button(0, BAR_Y, SCR_W, BAR_H, "SETTINGS", COL_BTN_BRD, TFT_CYAN);
+    draw_session_nav("SWING WHEN READY    SWIPE L/R: LAYOUT");
 }
 
 void ui_result(float ball_kmh, float club_kmh, float smash,
@@ -236,52 +412,283 @@ void ui_result(float ball_kmh, float club_kmh, float smash,
     // Mini row — tap-to-continue hint (any tap dismisses).
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    tft.drawFastHLine(0, BAR_Y, SCR_W, COL_DIV);
     tft.drawString("TAP TO CONTINUE", SCR_W / 2, ROW_H * 2 + MINI_ROW_H / 2);
+}
+
+// ── Large Digit layout ─────────────────────────────────────────────────────
+// One metric, huge. Label on top, big white value centred in the left area,
+// unit beneath, club pill on the right. `hint` drives the bottom nav strip.
+
+static void draw_large(const char* label, const char* value, const char* unit,
+                       int club_idx, const char* hint, uint16_t value_col)
+{
+    tft.fillScreen(TFT_BLACK);
+
+    const int area_w = SCR_W - PILL_W - 40;        // space left of the pill
+    const int cx     = area_w / 2 + 8;
+
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextFont(4); tft.setTextColor(s_label_col, TFT_BLACK);
+    tft.drawString(label, cx, 28);
+
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(8); tft.setTextColor(value_col, TFT_BLACK);   // ~75 px digits
+    tft.drawString(value, cx, 130);
+
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextFont(4); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    tft.drawString(unit, cx, 188);
+
+    // Club pill on the right, vertically centred in the metric area.
+    draw_club_pill(LPILL_X, LPILL_Y, PILL_W, PILL_H, club_idx, true);
+
+    draw_session_nav(hint);
+}
+
+// Format one metric's value+unit into caller buffers, returning its label and
+// colour. Mirrors the physics in main.cpp. club/smash may be "unset" (≤0).
+static const char* large_metric_strings(UiMetric m,
+        float ball_kmh, float club_kmh, float smash,
+        float carry_m, float total_m, bool use_mph,
+        char* val, size_t vn, const char** unit, uint16_t* col)
+{
+    *col = TFT_WHITE;
+    switch (m) {
+        case MET_CLUB:
+            *unit = speed_unit(use_mph);
+            if (club_kmh > 0.0f) snprintf(val, vn, "%.0f", disp_speed(club_kmh, use_mph));
+            else                 snprintf(val, vn, "--");
+            return "Club Speed";
+        case MET_BALL:
+            *unit = speed_unit(use_mph);
+            snprintf(val, vn, "%.0f", disp_speed(ball_kmh, use_mph));
+            return "Ball Speed";
+        case MET_SMASH:
+            *unit = "Factor"; *col = TFT_GREEN;
+            if (smash > 0.0f) snprintf(val, vn, "%.2f", smash);
+            else            { snprintf(val, vn, "--"); *col = TFT_WHITE; }
+            return "Smash";
+        case MET_CARRY:
+            *unit = dist_unit(use_mph);
+            snprintf(val, vn, "%.0f", disp_dist(carry_m, use_mph));
+            return "Carry";
+        default: /* MET_TOTAL */
+            *unit = dist_unit(use_mph);
+            snprintf(val, vn, "%.0f", disp_dist(total_m, use_mph));
+            return "Total Distance";
+    }
+}
+
+// Large-Digit "ready" — shows the focused metric with placeholder dashes.
+void ui_large_ready(UiMetric metric, int club_idx, bool use_mph)
+{
+    char val[12]; const char* unit; uint16_t col;
+    const char* label = large_metric_strings(metric, 0, 0, 0, 0, 0, use_mph,
+                                             val, sizeof(val), &unit, &col);
+    snprintf(val, sizeof(val), "--");
+    draw_large(label, val, unit, club_idx, "SWIPE U/D: METRIC   L/R: LAYOUT",
+               TFT_WHITE);
+}
+
+// Large-Digit result — shows the focused metric's measured/modeled value.
+void ui_large_result(UiMetric metric,
+                     float ball_kmh, float club_kmh, float smash,
+                     float carry_m, float total_m,
+                     int club_idx, bool use_mph)
+{
+    char val[12]; const char* unit; uint16_t col;
+    const char* label = large_metric_strings(metric, ball_kmh, club_kmh, smash,
+                                             carry_m, total_m, use_mph,
+                                             val, sizeof(val), &unit, &col);
+    draw_large(label, val, unit, club_idx, "TAP TO CONTINUE   SWIPE U/D: METRIC", col);
+}
+
+// ── Speed Training ─────────────────────────────────────────────────────────
+// A single huge swing-speed number, full width (no club pill).
+
+void ui_speed(float swing_kmh, bool use_mph, bool have)
+{
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextFont(4); tft.setTextColor(s_label_col, TFT_BLACK);
+    tft.drawString("SWING SPEED", SCR_W / 2, 30);
+
+    char val[12];
+    if (have) snprintf(val, sizeof(val), "%.0f", disp_speed(swing_kmh, use_mph));
+    else      snprintf(val, sizeof(val), "--");
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(8); tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString(val, SCR_W / 2, 140);
+
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextFont(4); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    tft.drawString(speed_unit(use_mph), SCR_W / 2, 198);
+
+    // Back-only nav (no club / layout switching in speed mode).
+    const int by = BAR_Y + BAR_H / 2;
+    tft.drawFastHLine(0, BAR_Y, SCR_W, COL_DIV);
+    tft.drawLine(24, by - 9, 14, by, s_label_col);
+    tft.drawLine(14, by, 24, by + 9, s_label_col);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextFont(2); tft.setTextColor(s_label_col, TFT_BLACK);
+    tft.drawString("Back", 34, by);
+    tft.setTextDatum(MC_DATUM); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    tft.drawString("SWING TO MEASURE", SCR_W / 2, by);
+}
+
+// ── Main menu & mode select ────────────────────────────────────────────────
+
+// Shared full-width list-row renderer for the menu / mode screens.
+static void draw_menu_row(int i, const char* label, uint16_t accent)
+{
+    const int y = MENU_HDR_H + i * MENU_ROW_H;
+    const int h = MENU_ROW_H - MENU_ROW_GAP;
+    tft.fillRoundRect(8, y + 4, SCR_W - 16, h - 4, BTN_RADIUS, COL_BTN_BG);
+    tft.fillRoundRect(8, y + 4, 6, h - 4, BTN_RADIUS, accent);   // accent stripe
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextFont(4); tft.setTextColor(TFT_WHITE, COL_BTN_BG);
+    tft.drawString(label, 28, y + h / 2 + 2);
+}
+
+static void draw_screen_header(const char* title, bool back)
+{
+    tft.fillRect(0, 0, SCR_W, MENU_HDR_H, TFT_NAVY);
+    if (back) {
+        const int y = MENU_HDR_H / 2;
+        tft.drawLine(24, y - 9, 14, y, TFT_CYAN);
+        tft.drawLine(14, y, 24, y + 9, TFT_CYAN);
+        tft.setTextDatum(ML_DATUM);
+        tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_NAVY);
+        tft.drawString("Back", 34, y);
+        tft.setTextDatum(MC_DATUM);
+    } else {
+        tft.setTextDatum(MC_DATUM);
+    }
+    tft.setTextFont(4); tft.setTextColor(s_label_col, TFT_NAVY);
+    tft.drawString(title, SCR_W / 2, MENU_HDR_H / 2);
+}
+
+void ui_menu_draw()
+{
+    tft.fillScreen(TFT_BLACK);
+    draw_screen_header("OpenScope", false);
+    draw_menu_row(0, "Start Session", TFT_GREEN);
+    draw_menu_row(1, "Settings",      TFT_CYAN);
+    draw_menu_row(2, "Shut Down",     TFT_RED);
+}
+
+void ui_mode_draw()
+{
+    tft.fillScreen(TFT_BLACK);
+    draw_screen_header("Select Mode", true);
+    draw_menu_row(0, "Practice Range", TFT_GREEN);
+    draw_menu_row(1, "On Course",      TFT_CYAN);
+    draw_menu_row(2, "Speed Training", TFT_YELLOW);
+}
+
+// ── Club picker ────────────────────────────────────────────────────────────
+// A vertical, swipe-scrollable list. `scroll` is the first visible club index;
+// the active club gets a filled highlight pill. (Momentum scrolling isn't
+// available on TFT_eSPI; the list pages by swipe-up/down — see main.cpp.)
+
+void ui_picker_draw(int club_idx, int scroll)
+{
+    tft.fillScreen(TFT_BLACK);
+
+    // Header with back chevron + title.
+    tft.fillRect(0, 0, SCR_W, PICK_HDR_H, TFT_NAVY);
+    const int hy = PICK_HDR_H / 2;
+    tft.drawLine(24, hy - 9, 14, hy, TFT_CYAN);
+    tft.drawLine(14, hy, 24, hy + 9, TFT_CYAN);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_NAVY);
+    tft.drawString("Back", 34, hy);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(4); tft.setTextColor(s_label_col, TFT_NAVY);
+    tft.drawString("Select Club", SCR_W / 2, hy);
+
+    // Visible rows.
+    for (int r = 0; r < PICK_ROWS; r++) {
+        int idx = scroll + r;
+        if (idx >= NUM_CLUBS) break;
+        const int y      = PICK_HDR_H + r * PICK_ROW_H;
+        const bool active = (idx == club_idx);
+        if (active)
+            tft.fillRoundRect(6, y + 3, SCR_W - 12, PICK_ROW_H - 6, BTN_RADIUS, COL_BTN_BG);
+        tft.drawFastHLine(0, y, SCR_W, COL_DIV);
+
+        tft.setTextDatum(ML_DATUM);
+        tft.setTextFont(4);
+        tft.setTextColor(active ? s_label_col : TFT_WHITE,
+                         active ? COL_BTN_BG : TFT_BLACK);
+        tft.drawString(CLUBS[idx].abbr, 20, y + PICK_ROW_H / 2);
+        tft.drawString(CLUBS[idx].name, 90, y + PICK_ROW_H / 2);
+        if (active) {
+            tft.setTextDatum(MR_DATUM);
+            tft.setTextFont(2); tft.setTextColor(TFT_GREEN, COL_BTN_BG);
+            tft.drawString("current", SCR_W - 16, y + PICK_ROW_H / 2);
+        }
+    }
+
+    // Scroll hint arrows when there is more above/below.
+    tft.setTextDatum(MC_DATUM); tft.setTextFont(2);
+    tft.setTextColor(COL_UNIT, TFT_BLACK);
+    if (scroll > 0)                        tft.drawString("swipe up", SCR_W - 60, PICK_HDR_H + 10);
+    if (scroll + PICK_ROWS < NUM_CLUBS)    tft.drawString("swipe down", SCR_W - 60, SCR_H - 12);
 }
 
 // ─── Settings screen ──────────────────────────────────────────────────────────
 
-void ui_settings_draw(int club_idx, bool use_mph, bool reset_done)
+void ui_settings_draw(int club_idx, bool use_mph, bool blue_theme,
+                      UiLayout layout, bool reset_done)
 {
     tft.fillScreen(TFT_BLACK);
 
-    // Header
+    // Header with back chevron (tap to exit).
     tft.fillRect(0, 0, SCR_W, SET_HDR_H, TFT_NAVY);
+    const int hy = SET_HDR_H / 2;
+    tft.drawLine(24, hy - 9, 14, hy, TFT_CYAN);
+    tft.drawLine(14, hy, 24, hy + 9, TFT_CYAN);
     tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(4); tft.setTextColor(TFT_CYAN, TFT_NAVY);
-    tft.drawString("Settings", 16, SET_HDR_H / 2);
-    tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_NAVY);
-    tft.setTextDatum(MR_DATUM);
-    tft.drawString("tap an item", SCR_W - 12, SET_HDR_H / 2);
+    tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_NAVY);
+    tft.drawString("Back", 34, hy);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(4); tft.setTextColor(s_label_col, TFT_NAVY);
+    tft.drawString("Settings", SCR_W / 2, hy);
 
-    char unit_val[8];
     char reset_val[12];
-    snprintf(unit_val,  sizeof(unit_val),  "%s", use_mph ? "mph" : "km/h");
-    snprintf(reset_val, sizeof(reset_val), "%s", reset_done ? "Done!" : CLUBS[club_idx].name);
+    snprintf(reset_val, sizeof(reset_val), "%s",
+             reset_done ? "Done!" : CLUBS[club_idx].name);
 
-    const char* labels[SET_N_ROWS] = { "Units", "Reset Stats", "Radar Cal.", "Touch Cal." };
-    const char* values[SET_N_ROWS] = { unit_val, reset_val,     "\x10",      "\x10"       };
+    // Values mirror the toggles handled in main.cpp's settings_loop().
+    const char* labels[SET_N_ROWS] = {
+        "Units", "Color", "Layout", "Reset Stats", "Radar Cal.", "Touch Cal."
+    };
+    const char* values[SET_N_ROWS] = {
+        use_mph ? "Mph/Yds" : "Kmh/m",
+        blue_theme ? "Blue" : "Black",
+        layout == LAYOUT_LARGE_DIGIT ? "Large Digit" : "Advanced",
+        reset_val,
+        "\x10",                 // ▶  enter radar calibration
+        "\x10",                 // ▶  enter touch calibration
+    };
 
-    // Tappable item rows — rounded card strips with cyan accent stripe.
+    // Tappable item rows — rounded card strips with a themed accent stripe.
     for (int i = 0; i < SET_N_ROWS; i++) {
         const int y = SET_HDR_H + i * SET_ROW_H;
-        tft.drawFastHLine(0, y, SCR_W, COL_DIV);
-        tft.fillRoundRect(4, y + 4, SCR_W - 8, SET_ROW_H - 8, BTN_RADIUS / 2, COL_BTN_BG);
-        tft.fillRoundRect(4, y + 4, 6, SET_ROW_H - 8, BTN_RADIUS / 2, TFT_CYAN);  // accent
+        tft.fillRoundRect(4, y + 3, SCR_W - 8, SET_ROW_H - 6, BTN_RADIUS / 2, COL_BTN_BG);
+        tft.fillRoundRect(4, y + 3, 6, SET_ROW_H - 6, BTN_RADIUS / 2, s_label_col);
 
         tft.setTextDatum(ML_DATUM);
         tft.setTextFont(4); tft.setTextColor(TFT_WHITE, COL_BTN_BG);
         tft.drawString(labels[i], 22, y + SET_ROW_H / 2);
 
-        uint16_t vc = (i == 1 && reset_done) ? TFT_GREEN : TFT_CYAN;
+        uint16_t vc = (i == 3 && reset_done) ? TFT_GREEN : TFT_CYAN;
         tft.setTextColor(vc, COL_BTN_BG);
         tft.setTextDatum(MR_DATUM);
         tft.drawString(values[i], SCR_W - 16, y + SET_ROW_H / 2);
     }
-
-    // DONE bar — exit settings.
-    draw_button(0, SET_DONE_Y, SCR_W, SCR_H - SET_DONE_Y, "DONE",
-                COL_BTN_BRD, TFT_GREEN);
 }
 
 // ─── Calibration screen ───────────────────────────────────────────────────────

@@ -77,9 +77,9 @@ golf-launch-monitor/
 │   ├── config.h          # pins, FFT/Doppler constants, layout
 │   ├── radar.cpp/.h      # ADC sampling, FFT, peak detection
 │   ├── clubs.cpp/.h      # club table + per-club stats
-│   ├── display.cpp/.h    # all TFT drawing + touch hit-testing
+│   ├── display.cpp/.h    # all TFT drawing, themes, gestures, hit-testing
 │   ├── storage.cpp/.h    # NVS persistence
-│   └── main.cpp          # state, buttons, sleep, main loop
+│   └── main.cpp          # touch UI state machine, sleep, main loop
 ├── test/
 │   └── test_speed_from_fft/  # native smoke test (pio test -e native)
 ├── docs/
@@ -125,23 +125,31 @@ Top view:
 ## Controls
 
 **Touch screen + one Power button.** All navigation is by touch; the only
-physical control is Power.
+physical control is Power (hold 2 s anywhere → sleep / shut down).
 
-| Where | Touch | Power |
-|-------|-------|-------|
-| Ready | Tap **club circle** → next club · tap **SETTINGS** bar | Hold 2 s → sleep |
-| Result | Tap **anywhere** → dismiss | Hold 2 s → sleep |
-| Settings | Tap a **row** · tap **DONE** → exit | Hold 2 s → exit |
-| Calibration | `[−10]` `[SAVE]` `[+10]` buttons | Hold 2 s → save + exit |
+| Screen | Touch |
+|--------|-------|
+| Main menu | Tap **Start Session**, **Settings**, or **Shut Down** |
+| Mode select | Tap **Practice Range**, **On Course**, or **Speed Training** · **‹ Back** |
+| Session | Tap the **club pill** → picker · **swipe ←/→** switch layout · tap a metric (Advanced) → Large Digit · **⚙ Menu** → Settings · **‹ Back** → mode select |
+| Large Digit | **Swipe ↑/↓** cycle metric (club → ball → smash → carry → total) |
+| Result | Tap **anywhere** → dismiss |
+| Club picker | **Swipe ↑/↓** scroll · tap a club → select · **‹ Back** keeps current |
+| Settings | Tap a **row** to toggle/open · **‹ Back** → exit |
+| Calibration | `[−10]` `[SAVE]` `[+10]` buttons |
 
-> On first boot (or via Settings → **Touch Cal.**) the unit runs a quick
-> 4-corner touch calibration, stored in flash.
+> A **left-edge swipe-right** also acts as **Back** on sub-screens. On first
+> boot (or via Settings → **Touch Cal.**) the unit runs a quick 4-corner touch
+> calibration, stored in flash.
 
 ## Display Layout
 
-The firmware has four screens:
+Navigation is **Main menu → Mode select → Session**, modelled on the Shot
+Scope LM1. A session shows shot data in one of two swipeable layouts, in either
+a **Black** (white labels) or **Blue** (cyan labels) theme — both set in
+Settings.
 
-### Ready / Result — shared 3×2 tile grid
+### Advanced — 3×2 tile grid
 
 ```
 ┌──────────┬──────────┬──────────┐
@@ -149,11 +157,12 @@ The firmware has four screens:
 │  98      │  152     │  1.55    │
 │  km/h    │  km/h    │          │
 ├──────────┼──────────┼──────────┤
-│  CARRY   │  TOTAL   │   (7I)   │
-│  187     │  209     │          │
-│  m       │  m       │          │
-└──────────┴──────────┴──────────┘
-          TAP TO CONTINUE
+│  CARRY   │  TOTAL   │ ┌──────┐ │
+│  187     │  209     │ │  7I  │ │  ← tap the club pill → picker
+│  m       │  m       │ └──────┘ │
+├──────────┴──────────┴──────────┤
+│ ‹ Back   SWIPE L/R: LAYOUT   ⚙ Menu │
+└────────────────────────────────┘
 ```
 
 The five tiles are the five single-Doppler metrics: **club speed**, **ball
@@ -162,26 +171,49 @@ speed**, **smash factor** (measured) plus **carry** and **total** (modeled).
 - **Smash** tile turns green when a club peak was found; `--` (dimmed) if only
   the ball was detected, in which case Club and Smash both read `--`.
 
+### Large Digit — one metric, full size
+
+```
+┌─────────────────────────────────┐
+│         Total Distance          │
+│                      ┌──────┐   │
+│         209          │  7I  │   │
+│          m           └──────┘   │
+│                                 │
+│ ‹ Back  SWIPE U/D: METRIC  ⚙ Menu │
+└─────────────────────────────────┘
+```
+
+Swipe **left/right** to switch Advanced ⇄ Large Digit; in Large Digit, swipe
+**up/down** to cycle club speed → ball speed → smash → carry → total.
+
+### Speed Training
+
+A single huge **swing-speed** number (the dominant Doppler peak) for swing-speed
+practice — no club selection or distance modelling.
+
 ### Settings screen
 
-Reached by tapping the **SETTINGS** bar on the main screen.
+Reached from the main menu, or the **⚙ Menu** gear during a session.
 
 ```
 ┌─────────────────────────────────────────────┐
-│  Settings                      tap an item   │
+│ ‹ Back              Settings                  │
 ├─────────────────────────────────────────────┤
-│▌ Units                               km/h   │
-│▌ Reset Stats                            7I  │
-│▌ Radar Cal.                             ►   │
-│▌ Touch Cal.                             ►   │
-├─────────────────────────────────────────────┤
-│                    DONE                      │
+│▌ Units                              Kmh/m   │
+│▌ Color                              Black   │
+│▌ Layout                          Advanced   │
+│▌ Reset Stats                          7I    │
+│▌ Radar Cal.                            ►    │
+│▌ Touch Cal.                            ►    │
 └─────────────────────────────────────────────┘
 ```
 
 | Item | Action |
 |------|--------|
-| Units | Toggle km/h ↔ mph |
+| Units | Toggle **Kmh/m** ↔ **Mph/Yds** |
+| Color | **Black** ↔ **Blue** theme |
+| Layout | **Advanced** ↔ **Large Digit** |
 | Reset Stats | Clears avg/best for the active club |
 | Radar Cal. | Opens the detection-threshold calibration screen |
 | Touch Cal. | Re-runs the 4-corner touch calibration |
@@ -193,7 +225,7 @@ a real shot vs. background noise. It is saved to flash.
 
 ### Enter calibration
 
-From the main screen, tap **SETTINGS** → tap **Radar Cal.**
+From the main menu → **Settings** → **Radar Cal.**
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -248,7 +280,7 @@ angle correction. See [the source](src/radar.cpp) for the signal chain and
 
 ## UI Mockup
 
-![OpenScope UI — all four screens](docs/openscope-ui.png?v=3)
+![OpenScope UI — eight screens: menu, mode select, Advanced & Large Digit layouts, club picker, speed training, settings, calibration](docs/openscope-ui.png?v=4)
 
 ## License
 

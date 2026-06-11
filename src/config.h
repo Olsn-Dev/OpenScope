@@ -52,6 +52,42 @@
 #define COL_TILE_BG  0x0841   // very dark grey — card tile background
 #define BTN_RADIUS   8        // rounded corner radius for buttons/rows
 
+// ─── Themes (LM1-style) ───────────────────────────────────────────────────────
+// Two selectable themes share the same layout; only the metric-label colour
+// changes. Background is always black; numbers are white; units grey.
+//   Black theme  → labels white
+//   Blue theme   → labels cyan
+#define COL_LABEL_BLACK  0xFFFF   // white — label colour in the black theme
+#define COL_LABEL_BLUE   0x35DE   // ~#36B6F0 cyan — label colour in the blue theme
+
+// ─── UI enums ─────────────────────────────────────────────────────────────────
+// On-device display layout for a session (swipe left/right to switch).
+enum UiLayout { LAYOUT_ADVANCED = 0, LAYOUT_LARGE_DIGIT = 1 };
+
+// The five LM1 metrics, in the order the Large-Digit screen cycles through them.
+enum UiMetric {
+    MET_CLUB = 0, MET_BALL, MET_SMASH, MET_CARRY, MET_TOTAL, MET_COUNT
+};
+
+// Session mode chosen from the mode-select screen. On Course currently behaves
+// like Practice (no per-shot session log yet); Speed only shows swing speed.
+enum SessionMode { MODE_PRACTICE = 0, MODE_ONCOURSE, MODE_SPEED };
+
+// Touch gestures recognised by ui_get_gesture().
+enum UiGesture {
+    GES_NONE = 0, GES_TAP, GES_SWIPE_L, GES_SWIPE_R, GES_SWIPE_U, GES_SWIPE_D
+};
+
+// ─── Gesture tuning ───────────────────────────────────────────────────────────
+// Movement (px) under this on release counts as a tap, not a swipe — debounces
+// the resistive digitizer so a jittery press doesn't register as a swipe.
+#define TAP_MOVE_MAX   24
+// Minimum travel (px) on the dominant axis to count as a swipe.
+#define SWIPE_MIN      55
+// A swipe whose start x is within this margin of the left edge is an
+// edge-swipe — used as a "back" gesture on sub-screens.
+#define EDGE_BACK_X    40
+
 // ─── Touch layout ─────────────────────────────────────────────────────────────
 // Geometry shared between the draw code (display.cpp) and hit-testing.
 // A "bar" is a full-width action strip at the bottom of a screen.
@@ -59,11 +95,42 @@
 #define BAR_H        60                  // bottom action-bar height
 #define BAR_Y        (SCR_H - BAR_H)     // 260 — top edge of bottom bars
 
-// Settings screen
-#define SET_HDR_H    48                  // header height
-#define SET_ROW_H    50                  // height of each tappable item row
-#define SET_N_ROWS    4                  // Units, Reset, Radar cal, Touch cal
-#define SET_DONE_Y   256                 // top of the DONE bar (256–320)
+// Club selector pill (LM1-style rounded outline) — lives in the bottom-right
+// cell of the Advanced grid (col 2, row 1).
+#define PILL_W       104
+#define PILL_H        62
+#define PILL_X       (COL_W * 2 + (COL_W - PILL_W) / 2)   // centred in col 2
+#define PILL_Y       (ROW_H + (ROW_H - PILL_H) / 2)       // centred in row 1
+
+// In the Large-Digit layout the pill sits on the right, beside the big number.
+#define LPILL_X      (SCR_W - PILL_W - 16)
+#define LPILL_Y      100
+
+// Back chevron hit area — top-left corner of every sub-screen.
+#define BACK_W        56
+#define BACK_H        48
+
+// Gear (settings) hit area — top-right corner of the session screens.
+#define GEAR_W        56
+#define GEAR_H        48
+#define GEAR_X       (SCR_W - GEAR_W)
+
+// Full-width list rows used by the main menu and mode-select screens.
+#define MENU_HDR_H    56                 // title bar height
+#define MENU_ROW_H    72                 // big finger-friendly rows
+#define MENU_ROW_GAP   8
+
+// Club picker — a vertical scrollable list.
+#define PICK_HDR_H    48
+#define PICK_ROW_H    52                 // ≥44 px tap target
+#define PICK_ROWS     ((SCR_H - PICK_HDR_H) / PICK_ROW_H)   // visible rows
+
+// Settings screen — 6 rows fit under a header with no separate DONE bar
+// (exit via the header back chevron or a swipe). 48 + 6×45 = 318 ≤ 320.
+//   0 Units   1 Color   2 Layout   3 Reset Stats   4 Radar Cal.   5 Touch Cal.
+#define SET_HDR_H    48                  // header height (holds back chevron)
+#define SET_ROW_H    45                  // height of each tappable item row
+#define SET_N_ROWS    6
 
 // Calibration bottom bar holds three buttons: [-10] [SAVE] [+10],
 // each one COL_W wide at y = BAR_Y.

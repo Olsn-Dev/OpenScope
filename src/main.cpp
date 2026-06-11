@@ -1,13 +1,22 @@
-// OpenScope — DIY Golf Launch Monitor  v0.8
+// OpenScope — DIY Golf Launch Monitor  v0.9
 // ESP32 + 1× CDM324 24 GHz Doppler Radar + ILI9488 3.5" touch TFT
 //
 // Source layout:
-//   config.h   — all compile-time constants and pin definitions
+//   config.h   — all compile-time constants, pin definitions and UI enums
 //   clubs.h/cpp— Club/ClubStats types and the CLUBS[] table
 //   radar.h/cpp— ADC sampling, FFT, peak detection (single Doppler channel)
-//   display.h/cpp — all TFT drawing (owns TFT_eSPI object)
+//   display.h/cpp — all TFT drawing (owns TFT_eSPI object), themes, gestures
 //   storage.h/cpp — NVS persistence (owns Preferences object)
-//   main.cpp   — global state, buttons, sleep, main loops
+//   main.cpp   — global state, the touch UI state machine, sleep
+//
+// UI model (LM1-style, fully touch-driven — only Power is a physical button):
+//   Main menu ──► Mode select ──► Session (Advanced / Large Digit)
+//                            └──► Speed Training
+//   • Swipe ↔ toggles Advanced ⇄ Large Digit; swipe ↕ cycles the focused
+//     metric in Large Digit.
+//   • Tap the club pill to open the scrollable club picker.
+//   • Bottom-left "Back" (or left-edge swipe-right) goes up a level; the
+//     bottom-right gear opens Settings. Colour/Layout/Units live in Settings.
 
 #include <Arduino.h>
 #include "esp_sleep.h"
@@ -20,16 +29,27 @@
 // ─── Global state ─────────────────────────────────────────────────────────────
 
 static ClubStats g_stats[NUM_CLUBS];
-static int       g_club      = 0;
-static float     g_threshold = PEAK_THRESHOLD_DEFAULT;
-static bool      g_use_mph   = false;
+static int       g_club       = 0;
+static float     g_threshold  = PEAK_THRESHOLD_DEFAULT;
+static bool      g_use_mph    = false;
+static bool      g_blue_theme = false;                 // false = Black theme
+static int       g_layout     = LAYOUT_ADVANCED;       // session display layout
+static UiMetric  g_metric     = MET_TOTAL;             // Large-Digit focus
+
+// Top-level screen the loop() dispatcher is showing.
+enum AppState { ST_MENU, ST_MODE };
+static AppState g_state = ST_MENU;
+
+// Persist every user-visible setting in one shot.
+static void save_settings()
+{
+    nvs_save_settings(g_threshold, g_use_mph, g_club, g_blue_theme, g_layout);
+}
 
 // ─── Power button ─────────────────────────────────────────────────────────────
-// The only physical control left. All navigation is on the touch screen
-// (see ui_get_tap / ui_*_hit in display.h).
+// The only physical control left. All navigation is on the touch screen.
 
-// Returns true if the power button is held for hold_ms.
-// Blocks until released or timeout; ignores short taps.
+// Returns true if the power button is held for hold_ms (ignores short taps).
 static bool power_held(uint32_t hold_ms = 2000)
 {
     if (digitalRead(BTN_POWER) != LOW) return false;
@@ -44,11 +64,9 @@ static bool power_held(uint32_t hold_ms = 2000)
     return false;
 }
 
-// ─── Power management ─────────────────────────────────────────────────────────
-
 static void go_to_sleep()
 {
-    nvs_save_settings(g_threshold, g_use_mph, g_club);
+    save_settings();
     display_goodbye();
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, 0);  // BTN_POWER = GPIO27 (RTC)
     Serial.println("[PWR] Entering deep sleep");
@@ -81,14 +99,13 @@ static void calibration_loop()
                     Serial.printf("[CAL] Threshold → %.0f\n", g_threshold);
                     break;
                 case 2:  // SAVE + exit
-                    nvs_save_settings(g_threshold, g_use_mph, g_club);
+                    save_settings();
                     Serial.println("[CAL] Threshold saved, exit");
                     return;
             }
         }
         if (power_held(2000)) {
-            // Hardware fallback: save only the threshold and exit.
-            nvs_save_settings(g_threshold, g_use_mph, g_club);
+            save_settings();
             Serial.println("[CAL] Threshold saved, exit");
             return;
         }
@@ -112,55 +129,281 @@ static void calibration_loop()
 
         if ((float)peak_mag > max_seen) max_seen = (float)peak_mag;
 
-        // Pass the radar spectrum buffer to the display module
         ui_cal_update(vReal, peak_hz, peak_mag,
                       noise_ema, max_seen, g_threshold, g_use_mph);
     }
 }
 
 // ─── Settings loop ────────────────────────────────────────────────────────────
+// Six tappable rows: Units, Color, Layout, Reset Stats, Radar Cal., Touch Cal.
+// Exit via the header back chevron, a left-edge swipe-right, or a power hold.
 
 static void settings_loop()
 {
-    ui_settings_draw(g_club, g_use_mph);
+    ui_set_theme(g_blue_theme);
+    ui_settings_draw(g_club, g_use_mph, g_blue_theme, (UiLayout)g_layout);
 
     while (true) {
-        int tx, ty;
-        if (ui_get_tap(&tx, &ty)) {
-            switch (ui_settings_hit(tx, ty)) {
-                case 0:  // Units
+        int gx, gy;
+        UiGesture g = ui_get_gesture(&gx, &gy);
+
+        if (g == GES_SWIPE_R && gx < EDGE_BACK_X) { save_settings(); return; }
+
+        if (g == GES_TAP) {
+            switch (ui_settings_hit(gx, gy)) {
+                case 0:  // Units (Mph/Yds ⇄ Kmh/m)
                     g_use_mph = !g_use_mph;
                     Serial.printf("[SET] Units → %s\n", speed_unit(g_use_mph));
-                    ui_settings_draw(g_club, g_use_mph);
                     break;
-                case 1:  // Reset stats
+                case 1:  // Color (Black ⇄ Blue)
+                    g_blue_theme = !g_blue_theme;
+                    ui_set_theme(g_blue_theme);
+                    Serial.printf("[SET] Theme → %s\n", g_blue_theme ? "Blue" : "Black");
+                    break;
+                case 2:  // Layout (Advanced ⇄ Large Digit)
+                    g_layout = (g_layout == LAYOUT_ADVANCED)
+                               ? LAYOUT_LARGE_DIGIT : LAYOUT_ADVANCED;
+                    Serial.printf("[SET] Layout → %s\n",
+                                  g_layout == LAYOUT_ADVANCED ? "Advanced" : "Large");
+                    break;
+                case 3:  // Reset stats (current club)
                     reset_stats(g_club, g_stats);
-                    ui_settings_draw(g_club, g_use_mph, true);
+                    ui_settings_draw(g_club, g_use_mph, g_blue_theme,
+                                     (UiLayout)g_layout, true);
                     delay(800);
-                    ui_settings_draw(g_club, g_use_mph, false);
                     break;
-                case 2:  // Radar calibration
+                case 4:  // Radar calibration
                     calibration_loop();
-                    ui_settings_draw(g_club, g_use_mph);
                     break;
-                case 3: {  // Touch calibration
+                case 5: {  // Touch calibration
                     uint16_t tcal[5];
                     display_touch_calibrate(tcal);
                     nvs_save_touch_cal(tcal);
-                    ui_settings_draw(g_club, g_use_mph);
                     break;
                 }
-                case 9:  // DONE / exit
-                    nvs_save_settings(g_threshold, g_use_mph, g_club);
+                case 9:  // Back / exit
+                    save_settings();
                     Serial.println("[SET] Exit");
                     return;
+                default:
+                    continue;   // tapped dead space — no redraw
+            }
+            ui_settings_draw(g_club, g_use_mph, g_blue_theme, (UiLayout)g_layout);
+        }
+
+        if (power_held(2000)) { save_settings(); return; }
+        delay(5);
+    }
+}
+
+// ─── Club picker ──────────────────────────────────────────────────────────────
+// Scrollable list; tap a club to select, Back to keep the current one.
+// (TFT_eSPI has no inertial scrolling, so the list pages by swipe ↕.)
+
+static void club_picker()
+{
+    const int max_scroll = max(0, NUM_CLUBS - PICK_ROWS);
+    int scroll = constrain(g_club - PICK_ROWS / 2, 0, max_scroll);
+    ui_picker_draw(g_club, scroll);
+
+    while (true) {
+        int gx, gy;
+        UiGesture g = ui_get_gesture(&gx, &gy);
+
+        if (g == GES_SWIPE_R && gx < EDGE_BACK_X) return;   // edge-swipe back
+        if (g == GES_SWIPE_U) {                              // reveal later clubs
+            scroll = min(scroll + (PICK_ROWS - 1), max_scroll);
+            ui_picker_draw(g_club, scroll);
+        } else if (g == GES_SWIPE_D) {                       // reveal earlier clubs
+            scroll = max(scroll - (PICK_ROWS - 1), 0);
+            ui_picker_draw(g_club, scroll);
+        } else if (g == GES_TAP) {
+            int h = ui_picker_hit(gx, gy, scroll);
+            if (h == 99) return;                             // Back — no change
+            if (h >= 0) {
+                g_club = h;
+                save_settings();
+                Serial.printf("[PICK] Club → %s\n", CLUBS[g_club].name);
+                return;
             }
         }
-        if (power_held(2000)) {
-            nvs_save_settings(g_threshold, g_use_mph, g_club);
-            Serial.println("[SET] Exit");
-            return;
+        if (power_held(2000)) { go_to_sleep(); return; }
+        delay(8);
+    }
+}
+
+// ─── Session rendering helpers ────────────────────────────────────────────────
+
+static void draw_ready()
+{
+    ui_set_theme(g_blue_theme);
+    if (g_layout == LAYOUT_ADVANCED) ui_splash(g_club, g_stats, g_use_mph);
+    else                             ui_large_ready(g_metric, g_club, g_use_mph);
+}
+
+static void draw_result(float ball_kmh, float club_kmh, float smash,
+                        float carry_m, float total_m)
+{
+    ui_set_theme(g_blue_theme);
+    if (g_layout == LAYOUT_ADVANCED)
+        ui_result(ball_kmh, club_kmh, smash, carry_m, total_m, g_club, g_use_mph);
+    else
+        ui_large_result(g_metric, ball_kmh, club_kmh, smash,
+                        carry_m, total_m, g_club, g_use_mph);
+}
+
+// ─── Session loop (Practice / On Course) ──────────────────────────────────────
+// Measures shots while staying responsive to touch. Returns when the user
+// navigates Back to the mode-select screen.
+
+static void run_session(SessionMode /*mode*/)
+{
+    draw_ready();
+
+    while (true) {
+        // ── Touch / gestures ─────────────────────────────────────────────────
+        int gx, gy;
+        UiGesture g = ui_get_gesture(&gx, &gy);
+
+        if (g == GES_SWIPE_R && gx < EDGE_BACK_X) return;        // edge-swipe back
+
+        if (g == GES_SWIPE_L || g == GES_SWIPE_R) {              // toggle layout
+            g_layout = (g_layout == LAYOUT_ADVANCED)
+                       ? LAYOUT_LARGE_DIGIT : LAYOUT_ADVANCED;
+            save_settings();
+            draw_ready();
+            continue;
         }
+        if (g_layout == LAYOUT_LARGE_DIGIT &&
+            (g == GES_SWIPE_U || g == GES_SWIPE_D)) {            // cycle metric
+            g_metric = (g == GES_SWIPE_U)
+                       ? (UiMetric)((g_metric + 1) % MET_COUNT)
+                       : (UiMetric)((g_metric + MET_COUNT - 1) % MET_COUNT);
+            draw_ready();
+            continue;
+        }
+        if (g == GES_TAP) {
+            int hit = (g_layout == LAYOUT_ADVANCED) ? ui_splash_hit(gx, gy)
+                                                    : ui_large_hit(gx, gy);
+            switch (hit) {
+                case 3: return;                                  // Back
+                case 2: settings_loop(); draw_ready(); continue; // Menu/Settings
+                case 1: club_picker();   draw_ready(); continue; // club pill
+                case 4:                                          // metric cell
+                    if (g_layout == LAYOUT_ADVANCED) {
+                        int m = ui_advanced_metric_at(gx, gy);
+                        if (m >= 0) {
+                            g_metric = (UiMetric)m;
+                            g_layout = LAYOUT_LARGE_DIGIT;
+                            save_settings();
+                            draw_ready();
+                        }
+                    }
+                    continue;
+            }
+        }
+
+        if (power_held(2000)) { go_to_sleep(); return; }
+
+        // ── Radar detection ──────────────────────────────────────────────────
+        sample_radar();
+        double ball_hz = 0.0, club_hz = 0.0;
+        if (!detect_speeds(ball_hz, club_hz, g_threshold)) continue;
+
+        // ── Physics ───────────────────────────────────────────────────────────
+        // MEASURED: ball/club speed off the Doppler shift. MODELED: carry/total
+        // from each club's empirical carry+roll factors (a single Doppler can't
+        // measure launch angle, so distances are a model, not a per-shot reading).
+        const float ball_kmh = (float)(ball_hz * HZ_TO_KMH);
+        const float club_kmh = (club_hz > 0.0) ? (float)(club_hz * HZ_TO_KMH) : 0.0f;
+        const float smash    = (club_kmh > 0.0f) ? (ball_kmh / club_kmh) : 0.0f;
+        const float carry_m  = ball_kmh * CLUBS[g_club].carry_f;
+        const float total_m  = carry_m * (1.0f + CLUBS[g_club].roll_f);
+
+        Serial.printf("[HIT] Ball %.1f km/h | Club %.1f km/h | Smash %.2f"
+                      " | Carry %.0f m | Total %.0f m\n",
+                      ball_kmh, club_kmh, smash, carry_m, total_m);
+
+        record_carry(g_club, carry_m, g_stats);
+        draw_result(ball_kmh, club_kmh, smash, carry_m, total_m);
+
+        // Hold the result; any tap/swipe dismisses early, else auto-return at 6 s.
+        uint32_t t0 = millis();
+        while (millis() - t0 < 6000) {
+            int rx, ry;
+            if (ui_get_gesture(&rx, &ry) != GES_NONE) break;
+            if (power_held(2000)) go_to_sleep();
+            delay(20);
+        }
+        draw_ready();
+    }
+}
+
+// ─── Speed Training loop ──────────────────────────────────────────────────────
+// One big swing-speed number (the dominant Doppler peak). No club/layout here.
+
+static void speed_loop()
+{
+    ui_set_theme(g_blue_theme);
+    ui_speed(0.0f, g_use_mph, false);
+
+    while (true) {
+        int gx, gy;
+        UiGesture g = ui_get_gesture(&gx, &gy);
+        if (g == GES_SWIPE_R && gx < EDGE_BACK_X) return;
+        if (g == GES_TAP && gy >= BAR_Y && gx < 150) return;     // Back
+
+        if (power_held(2000)) { go_to_sleep(); return; }
+
+        sample_radar();
+        double ball_hz = 0.0, club_hz = 0.0;
+        if (!detect_speeds(ball_hz, club_hz, g_threshold)) continue;
+
+        const float kmh = (float)(ball_hz * HZ_TO_KMH);          // dominant peak
+        Serial.printf("[SPEED] %.1f km/h\n", kmh);
+        ui_speed(kmh, g_use_mph, true);
+
+        uint32_t t0 = millis();
+        while (millis() - t0 < 4000) {
+            int rx, ry;
+            if (ui_get_gesture(&rx, &ry) != GES_NONE) break;
+            if (power_held(2000)) go_to_sleep();
+            delay(20);
+        }
+        ui_speed(0.0f, g_use_mph, false);
+    }
+}
+
+// ─── Blocking menu helpers ────────────────────────────────────────────────────
+
+// Wait for a main-menu row tap. Returns 0/1/2; a power hold sleeps directly.
+static int menu_wait()
+{
+    while (true) {
+        int gx, gy;
+        if (ui_get_gesture(&gx, &gy) == GES_TAP) {
+            int h = ui_menu_hit(gx, gy);
+            if (h >= 0) return h;
+        }
+        if (power_held(2000)) go_to_sleep();
+        delay(8);
+    }
+}
+
+// Wait for a mode-select tap. Returns 0/1/2 (mode) or -1 for Back.
+static int mode_wait()
+{
+    while (true) {
+        int gx, gy;
+        UiGesture g = ui_get_gesture(&gx, &gy);
+        if (g == GES_SWIPE_R && gx < EDGE_BACK_X) return -1;
+        if (g == GES_TAP) {
+            int h = ui_mode_hit(gx, gy);
+            if (h == 3) return -1;                 // Back
+            if (h >= 0) return h;
+        }
+        if (power_held(2000)) go_to_sleep();
+        delay(8);
     }
 }
 
@@ -169,17 +412,18 @@ static void settings_loop()
 void setup()
 {
     Serial.begin(115200);
-    Serial.println("\n[OpenScope] v0.7 booting");
+    Serial.println("\n[OpenScope] v0.9 booting");
 
     pinMode(BTN_POWER, INPUT_PULLUP);
 
     // ADC: 12-bit, 11 dB attenuation → ~0–3.1 V input range
-    // On newer ESP-IDF: replace ADC_11db with ADC_ATTEN_DB_12 if it fails.
     analogReadResolution(12);
     analogSetPinAttenuation(RADAR_ADC_PIN, ADC_11db);
 
-    nvs_load(g_threshold, g_use_mph, g_club, g_stats, NUM_CLUBS);
+    nvs_load(g_threshold, g_use_mph, g_club, g_blue_theme, g_layout,
+             g_stats, NUM_CLUBS);
     display_init();
+    ui_set_theme(g_blue_theme);
 
     // Touch: apply stored calibration, or run the 4-corner calibration once.
     uint16_t tcal[5];
@@ -192,73 +436,34 @@ void setup()
         nvs_save_touch_cal(tcal);
     }
 
-    ui_splash(g_club, g_stats, g_use_mph);
-
-    Serial.printf("[OpenScope] Club: %s  Units: %s  Threshold: %.1f\n",
-                  CLUBS[g_club].name, speed_unit(g_use_mph), g_threshold);
+    g_state = ST_MENU;
+    Serial.printf("[OpenScope] Club: %s  Units: %s  Theme: %s  Layout: %s\n",
+                  CLUBS[g_club].name, speed_unit(g_use_mph),
+                  g_blue_theme ? "Blue" : "Black",
+                  g_layout == LAYOUT_ADVANCED ? "Advanced" : "Large");
     Serial.println("[OpenScope] Ready.");
 }
 
 void loop()
 {
-    // ── Touch handling ───────────────────────────────────────────────────────
-    int tx, ty;
-    if (ui_get_tap(&tx, &ty)) {
-        int hit = ui_splash_hit(tx, ty);
-        if (hit == 1) {                       // tap club circle → next club
-            g_club = (g_club + 1) % NUM_CLUBS;
-            nvs_save_settings(g_threshold, g_use_mph, g_club);
-            Serial.printf("[TOUCH] Club → %s\n", CLUBS[g_club].name);
-            ui_splash(g_club, g_stats, g_use_mph);
-            return;
+    switch (g_state) {
+        case ST_MENU: {
+            ui_set_theme(g_blue_theme);
+            ui_menu_draw();
+            int sel = menu_wait();
+            if      (sel == 0) g_state = ST_MODE;       // Start Session
+            else if (sel == 1) settings_loop();         // Settings → back to menu
+            else if (sel == 2) go_to_sleep();           // Shut Down
+            break;
         }
-        if (hit == 2) {                       // tap bottom bar → settings
-            settings_loop();
-            ui_splash(g_club, g_stats, g_use_mph);
-            return;
+        case ST_MODE: {
+            ui_set_theme(g_blue_theme);
+            ui_mode_draw();
+            int m = mode_wait();
+            if      (m < 0)           g_state = ST_MENU;          // Back
+            else if (m == MODE_SPEED) speed_loop();              // → back to mode
+            else                      run_session((SessionMode)m); // → back to mode
+            break;
         }
     }
-    if (power_held(2000)) {
-        go_to_sleep();
-        return;
-    }
-
-    // ── Radar detection ──────────────────────────────────────────────────────
-    sample_radar();
-    double ball_hz = 0.0, club_hz = 0.0;
-    if (!detect_speeds(ball_hz, club_hz, g_threshold)) return;
-
-    // ── Physics ───────────────────────────────────────────────────────────────
-    // MEASURED: ball_hz / club_hz are the Doppler shifts. With one sensor
-    // aligned to the shot line, ball_kmh = ball_hz · HZ_TO_KMH is the true
-    // line-of-sight ball speed off the face. Smash = ball / club speed.
-    //
-    // MODELED: carry/total are estimated from ball speed via each club's
-    // empirical carry factor (carry_f already bakes in that club's typical
-    // launch angle) and rollout factor. A single Doppler cannot measure launch
-    // angle, so carry is a model — not a per-shot measurement.
-    const float ball_kmh = (float)(ball_hz * HZ_TO_KMH);
-    const float club_kmh = (club_hz > 0.0) ? (float)(club_hz * HZ_TO_KMH) : 0.0f;
-    const float smash    = (club_kmh > 0.0f) ? (ball_kmh / club_kmh) : 0.0f;
-    const float carry_m  = ball_kmh * CLUBS[g_club].carry_f;
-    const float total_m  = carry_m * (1.0f + CLUBS[g_club].roll_f);
-
-    Serial.printf("[HIT] Ball %.1f km/h | Club %.1f km/h | Smash %.2f"
-                  " | Carry %.0f m | Total %.0f m\n",
-                  ball_kmh, club_kmh, smash, carry_m, total_m);
-
-    record_carry(g_club, carry_m, g_stats);
-    ui_result(ball_kmh, club_kmh, smash, carry_m, total_m, g_club, g_use_mph);
-
-    // ── Hold result, remain responsive ───────────────────────────────────────
-    // Any tap dismisses early; otherwise auto-returns after 6 s.
-    uint32_t t0 = millis();
-    while (millis() - t0 < 6000) {
-        int rx, ry;
-        if (ui_get_tap(&rx, &ry)) break;
-        if (power_held(2000)) go_to_sleep();
-        delay(20);
-    }
-
-    ui_splash(g_club, g_stats, g_use_mph);
 }
