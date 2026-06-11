@@ -5,12 +5,15 @@
 static Preferences prefs;
 
 void nvs_load(float& threshold, bool& use_mph, int& club,
+              bool& blue_theme, int& layout,
               ClubStats* stats, int num_clubs)
 {
     prefs.begin("openscope", false);
-    threshold = prefs.getFloat("thresh", 80.0f);
-    use_mph   = prefs.getBool("mph",    false);
-    club      = (int)prefs.getUInt("club", 0);
+    threshold  = prefs.getFloat("thresh", 80.0f);
+    use_mph    = prefs.getBool("mph",    false);
+    club       = (int)prefs.getUInt("club", 0);
+    blue_theme = prefs.getBool("blue", false);
+    layout     = (int)prefs.getUInt("layout", 0);
     if (club < 0 || club >= num_clubs) club = 0;
     for (int i = 0; i < num_clubs; i++) {
         char k[10];
@@ -22,12 +25,15 @@ void nvs_load(float& threshold, bool& use_mph, int& club,
     prefs.end();
 }
 
-void nvs_save_settings(float threshold, bool use_mph, int club)
+void nvs_save_settings(float threshold, bool use_mph, int club,
+                       bool blue_theme, int layout)
 {
     prefs.begin("openscope", false);
     prefs.putFloat("thresh", threshold);
     prefs.putBool("mph",     use_mph);
     prefs.putUInt("club",    (uint32_t)club);
+    prefs.putBool("blue",    blue_theme);
+    prefs.putUInt("layout",  (uint32_t)layout);
     prefs.end();
 }
 
