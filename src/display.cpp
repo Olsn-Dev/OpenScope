@@ -185,10 +185,10 @@ int ui_settings_hit(int x, int y)
     return -1;
 }
 
-// Main menu: 0=Start Session, 1=Settings, 2=Shut Down, -1=none.
+// Main menu: 0=Start Session, 1=Shot History, 2=Settings, 3=Shut Down, -1=none.
 int ui_menu_hit(int /*x*/, int y)
 {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         int top = MENU_HDR_H + i * MENU_ROW_H;
         if (y >= top && y < top + MENU_ROW_H - MENU_ROW_GAP) return i;
     }
@@ -214,6 +214,16 @@ int ui_picker_hit(int x, int y, int scroll)
     int row = (y - PICK_HDR_H) / PICK_ROW_H;
     int idx = scroll + row;
     if (idx >= 0 && idx < NUM_CLUBS) return idx;
+    return -1;
+}
+
+// Shot history: 99 = Back (header chevron), 98 = Clear (header right), -1 = none.
+// The list rows themselves aren't tappable — scrolling is by swipe.
+int ui_history_hit(int x, int y)
+{
+    if (y >= HIST_HDR_H) return -1;
+    if (x < BACK_W)      return 99;
+    if (x > SCR_W - 90)  return 98;
     return -1;
 }
 
@@ -574,8 +584,9 @@ void ui_menu_draw()
     tft.fillScreen(TFT_BLACK);
     draw_screen_header("OpenScope", false);
     draw_menu_row(0, "Start Session", TFT_GREEN);
-    draw_menu_row(1, "Settings",      TFT_CYAN);
-    draw_menu_row(2, "Shut Down",     TFT_RED);
+    draw_menu_row(1, "Shot History",  TFT_YELLOW);
+    draw_menu_row(2, "Settings",      TFT_CYAN);
+    draw_menu_row(3, "Shut Down",     TFT_RED);
 }
 
 void ui_mode_draw()
@@ -636,6 +647,114 @@ void ui_picker_draw(int club_idx, int scroll)
     tft.setTextColor(COL_UNIT, TFT_BLACK);
     if (scroll > 0)                        tft.drawString("swipe up", SCR_W - 60, PICK_HDR_H + 10);
     if (scroll + PICK_ROWS < NUM_CLUBS)    tft.drawString("swipe down", SCR_W - 60, SCR_H - 12);
+}
+
+// ─── Shot history ─────────────────────────────────────────────────────────────
+// Newest-first table of the persisted shot log. Like the club picker the list
+// pages by swipe ↕ (no inertial scrolling on TFT_eSPI); `scroll` is the
+// newest-first index of the top visible row.
+
+// Right edges of the four value columns (font 2, MR datum).
+#define HCOL_BALL   216
+#define HCOL_SMASH  300
+#define HCOL_CARRY  384
+#define HCOL_TOTAL  (SCR_W - 12)
+
+void ui_history_draw(const ShotRecord* shots, int count, int scroll,
+                     bool use_mph)
+{
+    tft.fillScreen(TFT_BLACK);
+
+    // Header with back chevron, title and a Clear action on the right.
+    tft.fillRect(0, 0, SCR_W, HIST_HDR_H, TFT_NAVY);
+    const int hy = HIST_HDR_H / 2;
+    tft.drawLine(24, hy - 9, 14, hy, TFT_CYAN);
+    tft.drawLine(14, hy, 24, hy + 9, TFT_CYAN);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextFont(2); tft.setTextColor(TFT_CYAN, TFT_NAVY);
+    tft.drawString("Back", 34, hy);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(4); tft.setTextColor(s_label_col, TFT_NAVY);
+    tft.drawString("Shot History", SCR_W / 2, hy);
+    if (count > 0) {
+        tft.setTextDatum(MR_DATUM);
+        tft.setTextFont(2); tft.setTextColor(TFT_RED, TFT_NAVY);
+        tft.drawString("Clear", SCR_W - 16, hy);
+    }
+
+    if (count == 0) {
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextFont(4); tft.setTextColor(COL_UNIT, TFT_BLACK);
+        tft.drawString("No shots yet", SCR_W / 2, SCR_H / 2 - 10);
+        tft.setTextFont(2);
+        tft.drawString("Hit some balls and they'll show up here",
+                       SCR_W / 2, SCR_H / 2 + 18);
+        return;
+    }
+
+    // Column labels.
+    char hdr[16];
+    tft.setTextFont(2); tft.setTextColor(COL_UNIT, TFT_BLACK);
+    const int cy = HIST_HDR_H + HIST_COL_H / 2;
+    tft.setTextDatum(ML_DATUM);
+    tft.drawString("#",    16, cy);
+    tft.drawString("CLUB", 60, cy);
+    tft.setTextDatum(MR_DATUM);
+    snprintf(hdr, sizeof(hdr), "BALL %s", speed_unit(use_mph));
+    tft.drawString(hdr, HCOL_BALL, cy);
+    tft.drawString("SMASH", HCOL_SMASH, cy);
+    snprintf(hdr, sizeof(hdr), "CARRY %s", dist_unit(use_mph));
+    tft.drawString(hdr, HCOL_CARRY, cy);
+    snprintf(hdr, sizeof(hdr), "TOTAL %s", dist_unit(use_mph));
+    tft.drawString(hdr, HCOL_TOTAL, cy);
+    tft.drawFastHLine(0, HIST_HDR_H + HIST_COL_H - 1, SCR_W, COL_DIV);
+
+    // Rows, newest first: visible row r shows shots[count - 1 - (scroll + r)].
+    char buf[12];
+    for (int r = 0; r < HIST_ROWS; r++) {
+        const int n = scroll + r;            // newest-first index
+        if (n >= count) break;
+        const ShotRecord& s = shots[count - 1 - n];
+        const int y  = HIST_HDR_H + HIST_COL_H + r * HIST_ROW_H;
+        const int ry = y + HIST_ROW_H / 2;
+        tft.drawFastHLine(0, y + HIST_ROW_H - 1, SCR_W, COL_DIV);
+
+        tft.setTextFont(2);
+        tft.setTextDatum(ML_DATUM);
+        snprintf(buf, sizeof(buf), "%d", count - n);     // shot number, 1 = oldest
+        tft.setTextColor(COL_UNIT, TFT_BLACK);
+        tft.drawString(buf, 16, ry);
+        tft.setTextColor(s_label_col, TFT_BLACK);
+        tft.drawString(CLUBS[s.club].abbr, 60, ry);
+
+        tft.setTextDatum(MR_DATUM);
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        snprintf(buf, sizeof(buf), "%.0f", disp_speed(s.ball_kmh, use_mph));
+        tft.drawString(buf, HCOL_BALL, ry);
+
+        if (s.club_kmh > 0.0f) {
+            snprintf(buf, sizeof(buf), "%.2f", s.ball_kmh / s.club_kmh);
+            tft.setTextColor(TFT_GREEN, TFT_BLACK);
+        } else {
+            snprintf(buf, sizeof(buf), "--");
+            tft.setTextColor(COL_UNIT, TFT_BLACK);
+        }
+        tft.drawString(buf, HCOL_SMASH, ry);
+
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        snprintf(buf, sizeof(buf), "%.0f", disp_dist(s.carry_m, use_mph));
+        tft.drawString(buf, HCOL_CARRY, ry);
+        snprintf(buf, sizeof(buf), "%.0f", disp_dist(s.total_m, use_mph));
+        tft.drawString(buf, HCOL_TOTAL, ry);
+    }
+
+    // Scroll hint arrows when there is more above/below.
+    tft.setTextDatum(MC_DATUM); tft.setTextFont(2);
+    tft.setTextColor(COL_UNIT, TFT_BLACK);
+    if (scroll > 0)
+        tft.drawString("swipe down", 60, HIST_HDR_H + HIST_COL_H + 10);
+    if (scroll + HIST_ROWS < count)
+        tft.drawString("swipe up", 60, SCR_H - 10);
 }
 
 // ─── Settings screen ──────────────────────────────────────────────────────────
