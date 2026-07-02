@@ -9,12 +9,17 @@
 //   with the hitting direction and facing the target (same geometry as the
 //   Shot Scope LM1). The ball recedes from the unit; Doppler measures receding
 //   speed identically to approaching speed.
-#define RADAR_ADC_PIN    34   // CDM324 IF → LM358 preamp → ADC1_CH6
-#define BTN_POWER        27   // Power (RTC GPIO17 — supports ext0 wake)
+//
+// Target board: LILYGO T-Energy-S3 (ESP32-S3). On the S3, ADC1 lives on
+// GPIO1–10 and every GPIO 0–21 is RTC-capable. Board-reserved pins to avoid:
+// IO0 (boot btn), IO3 (battery divider), IO15/16 (32 kHz crystal),
+// IO19/20 (USB), IO35–37 (octal PSRAM), IO43/44 (UART0), IO45/46 (straps).
+#define RADAR_ADC_PIN    1    // CDM324 IF → LM358 preamp → ADC1_CH0
+#define BTN_POWER        2    // Power (RTC-capable — supports ext0 wake)
 
 // All other navigation is via the touch panel (XPT2046, 4-wire resistive).
 // The touch controller shares the display SPI bus; its pins (TOUCH_CS=21,
-// MISO=19) are configured in platformio.ini build flags, not here.
+// MISO=13) are configured in platformio.ini build flags, not here.
 
 // ─── Sampling & FFT ───────────────────────────────────────────────────────────
 
