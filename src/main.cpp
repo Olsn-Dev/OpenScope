@@ -71,7 +71,7 @@ static void go_to_sleep()
 {
     save_settings();
     display_goodbye();
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, 0);  // BTN_POWER = GPIO27 (RTC)
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_POWER, 0);  // RTC-capable pin
     Serial.println("[PWR] Entering deep sleep");
     esp_deep_sleep_start();
 }

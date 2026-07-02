@@ -11,7 +11,7 @@ All components from AliExpress unless noted. Prices approximate (SEK).
 | 1 | ESP32 dev board with 18650 battery holder | `ESP32 18650 battery holder board` | 1 | 160 |
 | 2 | 18650 Li-Ion battery, 3000 mAh, protected | `18650 3000mAh protected battery` | 1 | 60 |
 | 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 1 | 20 |
-| 4 | LM358 op-amp IC | `LM358 op amp DIP8` | 1 | 7 |
+| 4 | LM358 preamp — bare DIP-8 IC **or** pre-built HW-164 ×100 module | `LM358 op amp DIP8` / `LM358 signal amplifier module` | 1 | 7 |
 | 5 | 3.5" TFT display, SPI, ILI9488, 480×320, **with 4-wire touch (XPT2046)** | `3.5 inch SPI TFT ILI9488 480x320 touch` | 1 | 120 |
 | 6 | Tactile push button, 6×6 mm, PCB mount (Power only) | `6x6mm tactile push button switch` | 2 | 4 |
 
@@ -28,6 +28,10 @@ Links to recomended parts:
 ---
 
 ## LM358 Preamplifier Passives
+
+> **Skip this section if you use the pre-built HW-164 LM358 module** — it
+> only needs its four pins wired (VCC/IN/OUT/GND) plus possibly a bias
+> network; see `docs/wiring.md`.
 
 A single radar needs a single preamp channel — one **LM358 IC** (the DIP-8
 has two op-amps; use one, leave the other unused). The channel amplifies the
@@ -77,28 +81,31 @@ The firmware (v0.7) is **touch-driven**. The only physical button is Power:
 
 | Button | GPIO | Function |
 |--------|------|---------|
-| Power  | GPIO27 | Hold 2 s → deep sleep; press to wake (RTC GPIO) |
+| Power  | GPIO2 | Hold 2 s → deep sleep; press to wake (RTC-capable) |
 
-Connect the button between GPIO27 and GND — internal pull-up, no resistor.
+Connect the button between GPIO2 and GND — internal pull-up, no resistor.
 Order 2 buttons (1 used + 1 spare). All navigation (club select, settings,
 calibration) is done on the touch screen.
 
 ### Display + touch
 Buy the **ILI9488** 480×320 SPI variant **with a 4-wire resistive touch panel**
 (XPT2046 controller). The touch shares the SPI bus with the display and needs
-**MISO connected (GPIO19)** plus its own chip-select (`TOUCH_CS` = GPIO21).
+**MISO connected (GPIO13)** plus its own chip-select (`TOUCH_CS` = GPIO21).
 A first-boot 4-corner calibration is stored in NVS; re-run it any time from
 Settings → Touch Cal.
 
 ### CDM324 radar (×1)
-A single CDM324 module (GPIO34) sits on the ground ~1.4 m behind the ball,
+A single CDM324 module (GPIO1 via the preamp) sits on the ground ~1.4 m behind the ball,
 facing the target. It measures ball and club speed directly; launch angle,
 spin and dispersion are not measurable with one Doppler sensor and are not
 faked. See `docs/wiring.md` for the placement diagram.
 
 - The **standard CDM324** (not the -UK or -F variant) is approved for 24 GHz
   ISM use in Sweden and the EU. No licence required.
-- Supply the CDM324 module from the ESP32 board's 5V rail.
+- Supply the CDM324 module from the board's `VCC5V` pin. **Note:** on the
+  T-Energy-S3 that pin is only 5 V while USB is plugged in — on battery it
+  carries raw battery voltage (3.7–4.2 V, no boost converter). Test radar
+  range on battery; add an MT3608 boost module if it is poor.
 - Do **not** connect the CDM324 IF pin directly to the ESP32 ADC — always via
   the LM358 preamp circuit.
 
@@ -108,10 +115,12 @@ The preamp must pass **300 Hz – 18 kHz** to cover the full speed range
 limit detection to ~112 km/h. Use the component values above.
 
 ### ESP32 + 18650 board
-The all-in-one board includes onboard TP4056 charging, a boost converter, and
-battery protection. No separate charging or protection circuit is needed.
-Charge via the board's USB port.
+The linked board is the **LILYGO T-Energy-S3** (ESP32-S3-WROOM-1-N16R8:
+16 MB flash, 8 MB PSRAM, USB-C). It has onboard HX6610S charging, an
+IP3005A battery-protection chip and an SY8089 3.3 V buck — no separate
+charging or protection circuit is needed. Charge via USB-C. There is **no
+5 V boost converter**; see the CDM324 note above.
 
 ### Display backlight
-The ST7796 display's backlight (BL pin) can be connected directly to 3.3V for
+The ILI9488 display's backlight (BL pin) can be connected directly to 3.3V for
 always-on backlight. Do not connect it to 5V.
