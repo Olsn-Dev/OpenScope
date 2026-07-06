@@ -29,7 +29,7 @@ about the difference:
 Other features:
 
 - Units in km/h · m or mph · yds
-- 3.5" color **touch** TFT display (ILI9488 + XPT2046)
+- 3.5" color TFT display (ILI9488) + 3-button navigation
 - Per-club statistics (avg, best carry) stored in flash
 - Deep sleep with one-button wake
 - Calibration mode with live FFT spectrum
@@ -77,9 +77,10 @@ golf-launch-monitor/
 │   ├── config.h          # pins, FFT/Doppler constants, layout
 │   ├── radar.cpp/.h      # ADC sampling, FFT, peak detection
 │   ├── clubs.cpp/.h      # club table + per-club stats
-│   ├── display.cpp/.h    # all TFT drawing, themes, gestures, hit-testing
+│   ├── buttons.cpp/.h    # debounced 3-button input (UP / DOWN / OK)
+│   ├── display.cpp/.h    # all TFT drawing, themes
 │   ├── storage.cpp/.h    # NVS persistence
-│   └── main.cpp          # touch UI state machine, sleep, main loop
+│   └── main.cpp          # button-driven UI state machine, sleep, main loop
 ├── test/
 │   └── test_speed_from_fft/  # native smoke test (pio test -e native)
 ├── docs/
@@ -124,31 +125,29 @@ Top view:
 
 ## Controls
 
-**Touch screen + one Power button.** All navigation is by touch; the only
-physical control is Power (hold 2 s anywhere → sleep / shut down).
+**Three buttons: UP, DOWN, OK.** UP/DOWN move the list highlight (auto-repeat
+when held); OK activates the highlighted row. Holding **OK 1.5 s** powers off
+from anywhere; pressing OK wakes the unit.
 
-| Screen | Touch |
-|--------|-------|
-| Main menu | Tap **Start Session**, **Shot History**, **Settings**, or **Shut Down** |
-| Mode select | Tap **Practice Range**, **On Course**, or **Speed Training** · **‹ Back** |
-| Shot history | **Swipe ↑/↓** scroll the last 50 shots · **Clear** wipes the log · **‹ Back** |
-| Session | Tap the **club pill** → picker · **swipe ←/→** switch layout · tap a metric (Advanced) → Large Digit · **⚙ Menu** → Settings · **‹ Back** → mode select |
-| Large Digit | **Swipe ↑/↓** cycle metric (club → ball → smash → carry → total) |
-| Result | Tap **anywhere** → dismiss |
-| Club picker | **Swipe ↑/↓** scroll · tap a club → select · **‹ Back** keeps current |
-| Settings | Tap a **row** to toggle/open · **‹ Back** → exit |
-| Calibration | `[−10]` `[SAVE]` `[+10]` buttons |
-
-> A **left-edge swipe-right** also acts as **Back** on sub-screens. On first
-> boot (or via Settings → **Touch Cal.**) the unit runs a quick 4-corner touch
-> calibration, stored in flash.
+| Screen | UP / DOWN | OK |
+|--------|-----------|----|
+| Main menu | Move highlight | Open **Start Session** / **Shot History** / **Settings** / **Shut Down** |
+| Mode select | Move highlight | Open **Practice Range** / **On Course** / **Speed Training** / **Back** |
+| Shot history | Page newer / older (last 50 shots) | Back |
+| Session (Advanced) | Change club | Open the **session menu** |
+| Session (Large Digit) | Cycle metric (club → ball → smash → carry → total) | Open the **session menu** |
+| Session menu | Move highlight | **Resume** / **Change Club** / **Layout** / **Settings** / **End Session** |
+| Result | Any button dismisses | Any button dismisses |
+| Club picker | Move highlight (list follows) | Select club |
+| Settings | Move highlight | Toggle / open the highlighted row |
+| Calibration | Threshold **+10** / **−10** | **Save** + exit |
 
 ## Display Layout
 
 Navigation is **Main menu → Mode select → Session**, modelled on the Shot
-Scope LM1. A session shows shot data in one of two swipeable layouts, in either
-a **Black** (white labels) or **Blue** (cyan labels) theme — both set in
-Settings.
+Scope LM1. A session shows shot data in one of two layouts (toggled in the
+session menu or Settings), in either a **Black** (white labels) or **Blue**
+(cyan labels) theme — both set in Settings.
 
 ### Advanced — 3×2 tile grid
 
@@ -159,10 +158,10 @@ Settings.
 │  km/h    │  km/h    │          │
 ├──────────┼──────────┼──────────┤
 │  CARRY   │  TOTAL   │ ┌──────┐ │
-│  187     │  209     │ │  7I  │ │  ← tap the club pill → picker
+│  187     │  209     │ │  7I  │ │  ← UP/DOWN change the club
 │  m       │  m       │ └──────┘ │
 ├──────────┴──────────┴──────────┤
-│ ‹ Back   SWIPE L/R: LAYOUT   ⚙ Menu │
+│ UP/DN: CLUB  SWING WHEN READY  OK: MENU │
 └────────────────────────────────┘
 ```
 
@@ -181,12 +180,13 @@ speed**, **smash factor** (measured) plus **carry** and **total** (modeled).
 │         209          │  7I  │   │
 │          m           └──────┘   │
 │                                 │
-│ ‹ Back  SWIPE U/D: METRIC  ⚙ Menu │
+│ UP/DN: METRIC  SWING WHEN READY  OK: MENU │
 └─────────────────────────────────┘
 ```
 
-Swipe **left/right** to switch Advanced ⇄ Large Digit; in Large Digit, swipe
-**up/down** to cycle club speed → ball speed → smash → carry → total.
+Toggle Advanced ⇄ Large Digit from the session menu (OK) or Settings; in
+Large Digit, **UP/DOWN** cycle club speed → ball speed → smash → carry →
+total.
 
 ### Speed Training
 
@@ -195,18 +195,20 @@ practice — no club selection or distance modelling.
 
 ### Settings screen
 
-Reached from the main menu, or the **⚙ Menu** gear during a session.
+Reached from the main menu, or via the session menu during a session.
+UP/DOWN move the highlight; OK toggles or opens the highlighted row.
 
 ```
 ┌─────────────────────────────────────────────┐
-│ ‹ Back              Settings                  │
+│                 Settings     OK: toggle/open  │
 ├─────────────────────────────────────────────┤
 │▌ Units                              Kmh/m   │
 │▌ Color                              Black   │
 │▌ Layout                          Advanced   │
 │▌ Reset Stats                          7I    │
+│▌ Clear History                         ►    │
 │▌ Radar Cal.                            ►    │
-│▌ Touch Cal.                            ►    │
+│▌ Back                                  ◄    │
 └─────────────────────────────────────────────┘
 ```
 
@@ -216,8 +218,9 @@ Reached from the main menu, or the **⚙ Menu** gear during a session.
 | Color | **Black** ↔ **Blue** theme |
 | Layout | **Advanced** ↔ **Large Digit** |
 | Reset Stats | Clears avg/best for the active club |
+| Clear History | Wipes the 50-shot log |
 | Radar Cal. | Opens the detection-threshold calibration screen |
-| Touch Cal. | Re-runs the 4-corner touch calibration |
+| Back | Save and return |
 
 ## Calibration
 
@@ -230,7 +233,7 @@ From the main menu → **Settings** → **Radar Cal.**
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  CALIBRATION MODE              tap the buttons below  │
+│  CALIBRATION MODE         UP/DOWN: adjust   OK: save  │
 ├──────────────────────────────────────────────────────┤
 │  [live FFT spectrum — teal bars below threshold,      │
 │   red bars above — yellow line = threshold]           │
@@ -241,7 +244,7 @@ From the main menu → **Settings** → **Radar Cal.**
 │ PEAK 0 Hz = 0.0 km/h                                  │
 │ THRESHOLD 80         SUGGESTED 58                     │
 ├───────────────┬───────────────┬──────────────────────┤
-│     −10       │     SAVE      │       +10            │
+│  DOWN: −10    │   OK: SAVE    │    UP: +10           │
 └───────────────┴───────────────┴──────────────────────┘
 ```
 
@@ -249,10 +252,10 @@ From the main menu → **Settings** → **Radar Cal.**
 
 1. Leave the device still for ~30 s. Note **NOISE FLOOR** (typically 8–20).
 2. Take a full practice swing. Note **MAX SEEN** (typically 200–600).
-3. Tap **`−10`** / **`+10`** to move the yellow threshold line between
-   noise floor and MAX SEEN. The **SUGGESTED** value (`noise × 4`) is a
-   good starting point.
-4. Tap **SAVE** (or hold **Power 2 s**) to save and return.
+3. Press **DOWN** / **UP** (hold to sweep) to move the yellow threshold line
+   between noise floor and MAX SEEN. The **SUGGESTED** value (`noise × 4`)
+   is a good starting point.
+4. Press **OK** to save and return.
 
 | Measurement | Typical value |
 |-------------|--------------|

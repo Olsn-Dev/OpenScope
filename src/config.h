@@ -15,11 +15,19 @@
 // IO0 (boot btn), IO3 (battery divider), IO15/16 (32 kHz crystal),
 // IO19/20 (USB), IO35–37 (octal PSRAM), IO43/44 (UART0), IO45/46 (straps).
 #define RADAR_ADC_PIN    1    // CDM324 IF → LM358 preamp → ADC1_CH0
-#define BTN_POWER        2    // Power (RTC-capable — supports ext0 wake)
 
-// All other navigation is via the touch panel (XPT2046, 4-wire resistive).
-// The touch controller shares the display SPI bus; its pins (TOUCH_CS=21,
-// MISO=13) are configured in platformio.ini build flags, not here.
+// Navigation is three physical buttons, each GPIO → GND (internal pull-ups).
+// OK doubles as the power button: short press = select, hold = power off,
+// press = wake from deep sleep (GPIO2 is RTC-capable — ext0 wake).
+#define PIN_BTN_OK       2    // select / confirm; hold = power off; wake pin
+#define PIN_BTN_UP       4
+#define PIN_BTN_DOWN     5
+
+// Button timing (see buttons.cpp).
+#define BTN_DEBOUNCE_MS       25
+#define BTN_LONG_MS         1500   // OK hold → power off
+#define BTN_REPEAT_DELAY_MS  450   // UP/DOWN auto-repeat after this hold…
+#define BTN_REPEAT_MS        140   // …then one event per this interval
 
 // ─── Sampling & FFT ───────────────────────────────────────────────────────────
 
@@ -54,8 +62,8 @@
 #define COL_DIM      0x2104   // near-black — inactive / dimmed tiles
 #define COL_CAL_HDR  0x5920   // dark green — calibration header bar
 #define COL_SEL_BG   0x1082   // very dark blue — settings selection bg
-#define COL_BTN_BG   0x18E3   // dark slate — touch button fill
-#define COL_BTN_BRD  0x4208   // grey       — touch button border
+#define COL_BTN_BG   0x18E3   // dark slate — list-row / button-bar fill
+#define COL_BTN_BRD  0x4208   // grey       — button-bar border
 #define COL_TILE_BG  0x0841   // very dark grey — card tile background
 #define BTN_RADIUS   8        // rounded corner radius for buttons/rows
 
@@ -68,7 +76,8 @@
 #define COL_LABEL_BLUE   0x35DE   // ~#36B6F0 cyan — label colour in the blue theme
 
 // ─── UI enums ─────────────────────────────────────────────────────────────────
-// On-device display layout for a session (swipe left/right to switch).
+// On-device display layout for a session (toggled in the session menu or
+// Settings).
 enum UiLayout { LAYOUT_ADVANCED = 0, LAYOUT_LARGE_DIGIT = 1 };
 
 // The five LM1 metrics, in the order the Large-Digit screen cycles through them.
@@ -81,24 +90,9 @@ enum UiMetric {
 // swing speed and is not logged (no club context).
 enum SessionMode { MODE_PRACTICE = 0, MODE_ONCOURSE, MODE_SPEED };
 
-// Touch gestures recognised by ui_get_gesture().
-enum UiGesture {
-    GES_NONE = 0, GES_TAP, GES_SWIPE_L, GES_SWIPE_R, GES_SWIPE_U, GES_SWIPE_D
-};
-
-// ─── Gesture tuning ───────────────────────────────────────────────────────────
-// Movement (px) under this on release counts as a tap, not a swipe — debounces
-// the resistive digitizer so a jittery press doesn't register as a swipe.
-#define TAP_MOVE_MAX   24
-// Minimum travel (px) on the dominant axis to count as a swipe.
-#define SWIPE_MIN      55
-// A swipe whose start x is within this margin of the left edge is an
-// edge-swipe — used as a "back" gesture on sub-screens.
-#define EDGE_BACK_X    40
-
-// ─── Touch layout ─────────────────────────────────────────────────────────────
-// Geometry shared between the draw code (display.cpp) and hit-testing.
-// A "bar" is a full-width action strip at the bottom of a screen.
+// ─── Screen layout ────────────────────────────────────────────────────────────
+// Geometry used by the draw code (display.cpp).
+// A "bar" is a full-width hint strip at the bottom of a screen.
 
 #define BAR_H        60                  // bottom action-bar height
 #define BAR_Y        (SCR_H - BAR_H)     // 260 — top edge of bottom bars
@@ -114,39 +108,34 @@ enum UiGesture {
 #define LPILL_X      (SCR_W - PILL_W - 16)
 #define LPILL_Y      100
 
-// Back chevron hit area — top-left corner of every sub-screen.
-#define BACK_W        56
-#define BACK_H        48
-
-// Gear (settings) hit area — top-right corner of the session screens.
-#define GEAR_W        56
-#define GEAR_H        48
-#define GEAR_X       (SCR_W - GEAR_W)
-
 // Full-width list rows used by the main menu and mode-select screens.
-// 56 + 4×64 = 312 ≤ 320 — four rows fit since Shot History joined the menu.
+// 56 + 4×64 = 312 ≤ 320 — four rows fit.
 #define MENU_HDR_H    56                 // title bar height
-#define MENU_ROW_H    64                 // big finger-friendly rows
+#define MENU_ROW_H    64                 // big list rows
 #define MENU_ROW_GAP   8
 
-// Club picker — a vertical scrollable list.
+// Session menu — five rows (Resume / Change Club / Layout / Settings /
+// End Session) need tighter rows: 56 + 5×48 = 296 ≤ 320.
+#define SMENU_ROW_H   48
+#define SMENU_N_ROWS   5
+
+// Club picker — a vertical scrollable list (UP/DOWN move the highlight).
 #define PICK_HDR_H    48
-#define PICK_ROW_H    52                 // ≥44 px tap target
+#define PICK_ROW_H    52
 #define PICK_ROWS     ((SCR_H - PICK_HDR_H) / PICK_ROW_H)   // visible rows
 
-// Settings screen — 6 rows fit under a header with no separate DONE bar
-// (exit via the header back chevron or a swipe). 48 + 6×45 = 318 ≤ 320.
-//   0 Units   1 Color   2 Layout   3 Reset Stats   4 Radar Cal.   5 Touch Cal.
-#define SET_HDR_H    48                  // header height (holds back chevron)
-#define SET_ROW_H    45                  // height of each tappable item row
-#define SET_N_ROWS    6
+// Settings screen — 7 rows under the header: 48 + 7×38 = 314 ≤ 320.
+//   0 Units   1 Color   2 Layout   3 Reset Stats   4 Clear History
+//   5 Radar Cal.   6 Back
+#define SET_HDR_H    48                  // header height
+#define SET_ROW_H    38                  // height of each item row
+#define SET_N_ROWS    7
 
 // Shot history — header bar, a column-label strip, then list rows.
-// Rows are display-only (not tappable), so they can be tighter than 44 px.
-#define HIST_HDR_H   48                  // header (Back / title / Clear)
+#define HIST_HDR_H   48                  // header (title)
 #define HIST_COL_H   24                  // column-label strip below the header
 #define HIST_ROW_H   34
 #define HIST_ROWS    ((SCR_H - HIST_HDR_H - HIST_COL_H) / HIST_ROW_H)  // 7
 
-// Calibration bottom bar holds three buttons: [-10] [SAVE] [+10],
-// each one COL_W wide at y = BAR_Y.
+// Calibration bottom bar shows the three button bindings:
+// [DOWN -10] [OK SAVE] [UP +10], each one COL_W wide at y = BAR_Y.
