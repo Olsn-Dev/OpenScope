@@ -22,6 +22,7 @@
 
 #include <Arduino.h>
 #include "esp_sleep.h"
+#include "driver/rtc_io.h"
 #include "config.h"
 #include "clubs.h"
 #include "radar.h"
@@ -59,10 +60,21 @@ static void go_to_sleep()
 {
     save_settings();
     display_goodbye();
+    // The 3.3V rail stays powered in deep sleep, so the backlight must be
+    // switched off explicitly — and held LOW through the sleep, since normal
+    // GPIO output state is lost when the digital domain powers down.
+    digitalWrite(PIN_TFT_BL, LOW);
+    gpio_hold_en((gpio_num_t)PIN_TFT_BL);
+    gpio_deep_sleep_hold_en();
     // The long-press event fires while OK is still held — wait for the release,
     // otherwise the low level would wake the chip right back up.
     while (digitalRead(PIN_BTN_OK) == LOW) delay(10);
     delay(50);
+    // The normal GPIO pull-ups power down in deep sleep, which would leave the
+    // wake pin floating (= random instant wake-ups). Enable the RTC-domain
+    // pull-up, which stays active while ext0 wake is armed.
+    rtc_gpio_pullup_en((gpio_num_t)PIN_BTN_OK);
+    rtc_gpio_pulldown_dis((gpio_num_t)PIN_BTN_OK);
     esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BTN_OK, 0);
     Serial.println("[PWR] Entering deep sleep");
     esp_deep_sleep_start();
@@ -448,6 +460,13 @@ void setup()
     Serial.begin(115200);
     Serial.println("\n[OpenScope] " FW_VERSION " booting");
 
+    // After a deep-sleep wake the OK pad is still claimed by the RTC mux
+    // (go_to_sleep enables its RTC pull-up); hand it back to the digital GPIO
+    // matrix before buttons_init() configures it. The backlight hold from
+    // go_to_sleep must be released too, or display_init can't switch it on.
+    rtc_gpio_deinit((gpio_num_t)PIN_BTN_OK);
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis((gpio_num_t)PIN_TFT_BL);
     buttons_init();
 
     // ADC: 12-bit, 11 dB attenuation → ~0–3.1 V input range
