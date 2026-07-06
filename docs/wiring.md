@@ -11,7 +11,7 @@ USB-C).
 CDM324 (ground, 1.4 m behind ball) ──► LM358 preamp ──► GPIO1 (ADC1_CH0)
                                                            │
 18650 battery ──► T-Energy-S3                              ├──► GPIO11/12/10/9/14 (SPI)
-                  (onboard regulator)                      │
+                  (onboard regulator)                      ├──► GPIO21 (backlight)
                                                            └──► ILI9488 TFT display
 
 BTN_OK    ──► GPIO2 ──► GND   (select / confirm · hold = power off · wake)
@@ -165,7 +165,7 @@ present, are left unconnected.
 | CS | 10 | display select |
 | D/C | 9 | |
 | RST | 14 | |
-| BL (backlight) | 3.3V (always on) | |
+| BL (backlight) | 21 | GPIO-driven — firmware turns it off in deep sleep |
 | VDD | 3.3V | |
 | GND | GND | |
 

@@ -23,6 +23,11 @@
 #define PIN_BTN_UP       4
 #define PIN_BTN_DOWN     5
 
+// Display backlight (module BL/LED pin). GPIO-driven — not tied to 3.3V — so
+// power-off can actually turn the backlight off; it is held LOW through deep
+// sleep via gpio_hold. GPIO21 sits on the same header as the display SPI pins.
+#define PIN_TFT_BL      21
+
 // Button timing (see buttons.cpp).
 #define BTN_DEBOUNCE_MS       25
 #define BTN_LONG_MS         1500   // OK hold → power off

@@ -28,6 +28,10 @@ const char* dist_unit(bool use_mph)       { return use_mph ? "yds"  : "m";    }
 
 void display_init()
 {
+    // Light the backlight first so the panel never shows half-initialised
+    // garbage with the lamp already on.
+    pinMode(PIN_TFT_BL, OUTPUT);
+    digitalWrite(PIN_TFT_BL, HIGH);
     tft.init();
     tft.setRotation(TFT_ROTATION);
     tft.fillScreen(TFT_BLACK);
