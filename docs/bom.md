@@ -12,8 +12,8 @@ All components from AliExpress unless noted. Prices approximate (SEK).
 | 2 | 18650 Li-Ion battery, 3000 mAh, protected | `18650 3000mAh protected battery` | 1 | 60 |
 | 3 | CDM324 24 GHz Doppler radar module | AliExpress: `4000332661554` | 1 | 20 |
 | 4 | LM358 preamp — bare DIP-8 IC **or** pre-built HW-164 ×100 module | `LM358 op amp DIP8` / `LM358 signal amplifier module` | 1 | 7 |
-| 5 | 3.5" TFT display, SPI, ILI9488, 480×320, **with 4-wire touch (XPT2046)** | `3.5 inch SPI TFT ILI9488 480x320 touch` | 1 | 120 |
-| 6 | Tactile push button, 6×6 mm, PCB mount (Power only) | `6x6mm tactile push button switch` | 2 | 4 |
+| 5 | 3.5" TFT display, SPI, ILI9488, 480×320 (touch panel not needed) | `3.5 inch SPI TFT ILI9488 480x320` | 1 | 120 |
+| 6 | Tactile push button, 6×6 mm, PCB mount (UP / DOWN / OK) | `6x6mm tactile push button switch` | 4 | 8 |
 
 Links to recomended parts:
 
@@ -76,23 +76,22 @@ CDM324 IF signal ×100 and bandpass-filters it to 300 Hz – 16 kHz (covers
 
 ## Notes
 
-### Controls — touch screen + one button
-The firmware (v0.7) is **touch-driven**. The only physical button is Power:
+### Controls — three buttons
+The firmware is driven by **three push buttons**:
 
 | Button | GPIO | Function |
 |--------|------|---------|
-| Power  | GPIO2 | Hold 2 s → deep sleep; press to wake (RTC-capable) |
+| UP     | GPIO4 | Highlight up · previous club/metric · threshold +10 |
+| DOWN   | GPIO5 | Highlight down · next club/metric · threshold −10 |
+| OK     | GPIO2 | Select/confirm · hold 1.5 s → power off · press to wake (RTC-capable) |
 
-Connect the button between GPIO2 and GND — internal pull-up, no resistor.
-Order 2 buttons (1 used + 1 spare). All navigation (club select, settings,
-calibration) is done on the touch screen.
+Connect each button between its GPIO and GND — internal pull-ups, no
+resistors. Order 4 buttons (3 used + 1 spare).
 
-### Display + touch
-Buy the **ILI9488** 480×320 SPI variant **with a 4-wire resistive touch panel**
-(XPT2046 controller). The touch shares the SPI bus with the display and needs
-**MISO connected (GPIO13)** plus its own chip-select (`TOUCH_CS` = GPIO21).
-A first-boot 4-corner calibration is stored in NVS; re-run it any time from
-Settings → Touch Cal.
+### Display
+Buy the **ILI9488** 480×320 SPI variant. A touch panel is not required —
+the firmware doesn't use it, so the cheaper non-touch module works (a touch
+variant also works with its touch pins left unconnected).
 
 ### CDM324 radar (×1)
 A single CDM324 module (GPIO1 via the preamp) sits on the ground ~1.4 m behind the ball,

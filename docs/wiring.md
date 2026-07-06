@@ -10,15 +10,17 @@ USB-C).
 ```
 CDM324 (ground, 1.4 m behind ball) ──► LM358 preamp ──► GPIO1 (ADC1_CH0)
                                                            │
-18650 battery ──► T-Energy-S3                              ├──► GPIO11/12/13/10/9/14 (SPI)
+18650 battery ──► T-Energy-S3                              ├──► GPIO11/12/10/9/14 (SPI)
                   (onboard regulator)                      │
-                                                           ├──► ILI9488 TFT display
-                                                           └──► XPT2046 touch (TOUCH_CS GPIO21)
+                                                           └──► ILI9488 TFT display
 
-BTN_POWER  ──► GPIO2 ──► GND   (only physical control)
+BTN_OK    ──► GPIO2 ──► GND   (select / confirm · hold = power off · wake)
+BTN_UP    ──► GPIO4 ──► GND
+BTN_DOWN  ──► GPIO5 ──► GND
 ```
 
-> All navigation is on the touch screen. The only physical button is Power.
+> All navigation is via the three buttons: UP/DOWN move the highlight or
+> change the club/metric, OK confirms. Holding OK ~1.5 s powers off.
 
 > **ESP32-S3 pins to avoid** (used by the T-Energy-S3 board itself):
 > IO0 (boot button), IO3 (battery-voltage divider), IO15/IO16 (32 kHz
@@ -150,61 +152,57 @@ CDM324 IF ──┤├────────────┤├─────�
 
 ---
 
-## TFT Display (ILI9488) + Touch (XPT2046) → ESP32 SPI
+## TFT Display (ILI9488) → ESP32 SPI
 
-The display and the resistive touch controller share one SPI bus. They have
-separate chip-select lines but common MOSI / SCLK / MISO.
-
-On the module the touch pins are labelled `TCK / TCS / TDI / TDO / PEN`
-(= T_CLK, T_CS, T_DIN, T_DO, T_IRQ).
+Display only — the module's touch pins (`TCK / TCS / TDI / TDO / PEN`), if
+present, are left unconnected.
 
 | Module pin | ESP32-S3 GPIO | Notes |
 |------------|---------------|-------|
-| SDI / TDI (MOSI) | 11 | shared |
-| SCK / TCK (SCLK) | 12 | shared |
-| SDO / TDO (MISO) | 13 | shared — **required for touch** |
+| SDI (MOSI) | 11 | |
+| SCK (SCLK) | 12 | |
+| SDO (MISO) | 13 | optional — firmware never reads the panel |
 | CS | 10 | display select |
-| TCS | 21 | touch select (`TOUCH_CS`) |
 | D/C | 9 | |
 | RST | 14 | |
 | BL (backlight) | 3.3V (always on) | |
-| PEN (T_IRQ) | — | leave unconnected (TFT_eSPI polls, no IRQ used) |
 | VDD | 3.3V | |
 | GND | GND | |
 
-> IO9–14 + IO21 all sit on the same T-Energy-S3 header (with a GND pin), so
-> the whole display ribbon lands on one connector. IO10–13 are the S3's
-> native FSPI pins — full 40 MHz SPI works.
->
-> Unlike the old display-only wiring, **MISO must now be connected** — the
-> XPT2046 returns touch coordinates over it. On these 3.5" modules the display
-> SDO and the touch TDO are the same physical net; wire it to GPIO13.
+> IO9–14 all sit on the same T-Energy-S3 header (with a GND pin), so the
+> whole display ribbon lands on one connector. IO10–13 are the S3's native
+> FSPI pins — full 40 MHz SPI works.
 
 ---
 
-## Control — Power button + touch
+## Control — three buttons
 
-Only one physical button remains. Everything else is on the touch screen.
+All navigation is on three momentary push buttons. One leg to the GPIO, the
+other to GND — internal pull-ups, no resistors needed.
 
 | Button | GPIO | Function |
 |--------|------|---------|
-| Power  | GPIO2 | Hold 2 s → deep sleep; press to wake |
+| UP     | GPIO4 | Move highlight up · previous club / metric · threshold +10 |
+| DOWN   | GPIO5 | Move highlight down · next club / metric · threshold −10 |
+| OK     | GPIO2 | Select / confirm · **hold 1.5 s → power off** · press to wake |
 
 > GPIO2 is RTC-capable (on the ESP32-S3 every GPIO 0–21 is) — required for
-> deep sleep wake. Do not move the Power button to a non-RTC pin (IO22+).
-> One leg to GPIO2, the other to GND — internal pull-up, no resistor needed.
+> deep sleep wake. Do not move the OK button to a non-RTC pin (IO22+).
+> UP/DOWN auto-repeat when held (fast scrolling / threshold sweeps).
 
-**Touch actions by screen:**
+**Button actions by screen:**
 
-| Screen | Touch targets | Power (hold 2 s) |
-|--------|---------------|------------------|
-| Splash | Tap club circle = next club · bottom bar = Settings | Deep sleep |
-| Result | Tap anywhere = dismiss | Deep sleep |
-| Settings | Tap a row (Units / Reset / Radar Cal. / Touch Cal.) · DONE bar = exit | Save + exit |
-| Calibration | `[-10]` `[SAVE]` `[+10]` buttons | Save + exit (fallback) |
-
-> **First boot / Touch Cal.:** if no touch calibration is stored, the unit runs
-> a 4-corner calibration once. Re-run it any time from Settings → Touch Cal.
+| Screen | UP / DOWN | OK |
+|--------|-----------|----|
+| Main menu / Mode select | Move highlight | Open highlighted row |
+| Session (Advanced) | Change club | Open session menu |
+| Session (Large Digit) | Cycle focused metric | Open session menu |
+| Session menu | Move highlight | Resume / Change Club / Layout / Settings / End Session |
+| Result | — | Any button dismisses |
+| Club picker | Move highlight (list follows) | Select club |
+| Shot history | Page newer / older | Back |
+| Settings | Move highlight | Toggle / open highlighted row |
+| Calibration | Threshold +10 / −10 | Save + exit |
 
 ---
 

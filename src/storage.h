@@ -46,12 +46,3 @@ void record_shot(const ShotRecord& rec, ShotRecord* shots, int& count);
 
 // Erase the shot log (RAM + NVS).
 void clear_history(ShotRecord* shots, int& count);
-
-// ─── Touch calibration (XPT2046) ──────────────────────────────────────────────
-
-// Load the 5-value TFT_eSPI touch calibration blob.
-// Returns true if a valid calibration was previously stored.
-bool nvs_load_touch_cal(uint16_t cal[5]);
-
-// Persist the 5-value touch calibration blob.
-void nvs_save_touch_cal(const uint16_t cal[5]);
